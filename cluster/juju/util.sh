@@ -26,50 +26,25 @@ export JUJU_REPOSITORY=${JUJU_PATH}/charms
 #KUBE_BUNDLE_URL='https://raw.githubusercontent.com/whitmo/bundle-kubernetes/master/bundles.yaml'
 KUBE_BUNDLE_PATH=${JUJU_PATH}/bundles/local.yaml
 
-function verify-prereqs() {
-    gather_installation_reqs
-}
-
+# Build the binaries on the local system and copy the binaries to the Juju charm.
 function build-local() {
+    local targets=(
+        cmd/kube-proxy \
+        cmd/kube-apiserver \
+        cmd/kube-controller-manager \
+        cmd/kubelet \
+        plugin/cmd/kube-scheduler \
+        cmd/kubectl \
+        test/e2e/e2e.test \
+    )
     # Make a clean environment to avoid compiler errors.
     make clean
     # Build the binaries locally that are used in the charms.
-    make all WHAT="cmd/kube-apiserver cmd/kubectl cmd/kube-controller-manager plugin/cmd/kube-scheduler cmd/kubelet cmd/kube-proxy"
-    OUTPUT_DIR=_output/local/bin/linux/amd64
+    make all WHAT="${targets[*]}"
+    local OUTPUT_DIR=_output/local/bin/linux/amd64
     mkdir -p cluster/juju/charms/trusty/kubernetes-master/files/output
-    # Copy the binary output to the charm directory.
+    # Copy the binaries from the output directory to the charm directory.
     cp -v $OUTPUT_DIR/* cluster/juju/charms/trusty/kubernetes-master/files/output
-}
-
-function get-password() {
-    echo "TODO: Assign username/password security"
-}
-
-function kube-up() {
-    build-local
-    if [[ -d "~/.juju/current-env" ]]; then
-        juju quickstart -i --no-browser
-    else
-        juju quickstart --no-browser
-    fi
-    # The juju-deployer command will deploy the bundle and can be run
-    # multiple times to continue deploying the parts that fail.
-    juju deployer -c ${KUBE_BUNDLE_PATH}
-    # Sleep due to juju bug http://pad.lv/1432759
-    sleep-status
-    detect-master
-    detect-minions
-
-    export KUBE_MASTER_IP="${KUBE_MASTER_IP}:8080"
-    export CONTEXT="juju"
-}
-
-function kube-down() {
-    # Remove the binary files from the charm directory.
-    rm -rf cluster/juju/charms/trusty/kubernetes-master/files/output/
-    local jujuenv
-    jujuenv=$(cat ~/.juju/current-environment)
-    juju destroy-environment $jujuenv
 }
 
 function detect-master() {
@@ -104,12 +79,42 @@ function detect-minions() {
     export MINION_NAMES=$KUBE_MINION_IP_ADDRESSES
 }
 
-function setup-logging-firewall() {
-    echo "TODO: setup logging and firewall rules"
+function get-password() {
+  if [[ -z "${KUBE_USER}" || -z "${KUBE_PASSWORD}" ]]; then
+    export KUBE_USER=admin
+    export KUBE_PASSWORD=$(tr -cd '[:alnum:]' < /dev/urandom | head -c16)
+  fi
 }
 
-function teardown-logging-firewall() {
-    echo "TODO: teardown logging and firewall rules"
+function kube-up() {
+    build-local
+    if [[ -d "~/.juju/current-env" ]]; then
+        juju quickstart -i --no-browser
+    else
+        juju quickstart --no-browser
+    fi
+    # The juju-deployer command will deploy the bundle and can be run
+    # multiple times to continue deploying the parts that fail.
+    juju deployer -c ${KUBE_BUNDLE_PATH}
+    # Sleep due to juju bug http://pad.lv/1432759
+    sleep-status
+    detect-master
+    detect-minions
+
+    export KUBE_MASTER_IP="${KUBE_MASTER_IP}:8080"
+    export CONTEXT="juju"
+}
+
+function kube-down() {
+    # Remove the binary files from the charm directory.
+    rm -rf cluster/juju/charms/trusty/kubernetes-master/files/output/
+    local jujuenv
+    jujuenv=$(cat ~/.juju/current-environment)
+    juju destroy-environment $jujuenv
+}
+
+function prepare-e2e() {
+  echo "prepare-e2e() The Juju provider does not need any preperations for e2e." 1>&2
 }
 
 function sleep-status() {
@@ -138,4 +143,27 @@ function sleep-status() {
     # minions have recieved the binary from the master distribution hub during relations
     echo "Sleeping an additional minute to allow the cluster to settle"
     sleep 60
+}
+
+# Execute prior to running tests to build a release if required for environment.
+function test-build-release {
+  echo "test-build-release() " 1>&2
+}
+
+# Execute prior to running tests to initialize required structure. This is
+# called from hack/e2e.go only when running -up (it is run after kube-up).
+function test-setup {
+  echo "test-setup() " 1>&2
+}
+
+# Execute after running tests to perform any required clean-up. This is called
+# from hack/e2e.go
+function test-teardown() {
+  echo "test-teardown() " 1>&2
+  kube-down
+}
+
+# Verify the prerequisites are statisfied before running.
+function verify-prereqs() {
+    gather_installation_reqs
 }

@@ -18,19 +18,20 @@ import setup
 setup.pre_install()
 import subprocess
 
-from charmhelpers.core import hookenv
 from charmhelpers import fetch
+from charmhelpers.core import hookenv
+from charmhelpers.contrib import ssl
 from charmhelpers.fetch import archiveurl
 from path import path
 
 
 def install():
     install_packages()
+    create_cert()
     hookenv.log('Installing go')
     download_go()
 
     hookenv.log('Adding kubernetes and go to the path')
-
     strings = [
         'export GOROOT=/usr/local/go\n',
         'export PATH=$PATH:$GOROOT/bin\n',
@@ -42,8 +43,10 @@ def install():
     clone_repository()
 
     hookenv.open_port(8080)
+    hookenv.open_port(443)
 
     hookenv.log('Install complete')
+
 
 def download_go():
     """
@@ -64,7 +67,9 @@ def clone_repository():
     """
 
     repository = 'https://github.com/GoogleCloudPlatform/kubernetes.git'
-    kubernetes_directory = '/opt/kubernetes'
+    kubernetes_directory = path('/opt/kubernetes')
+    if kubernetes_directory.isdir():
+        kubernetes_directory.rmtree_p()
 
     command = ['git', 'clone', repository, kubernetes_directory]
     print(command)
@@ -72,23 +77,45 @@ def clone_repository():
     print(output)
 
 
-
 def install_packages():
     """
-     Install required packages to build the k8s source, and syndicate between
-     minion nodes. In addition, fetch pip to handle python dependencies
+    Install required packages to build the k8s source, and syndicate between
+    minion nodes. In addition, fetch pip to handle python dependencies
     """
     hookenv.log('Installing Debian packages')
     # Create the list of packages to install.
-    apt_packages = ['build-essential', 'git', 'make', 'nginx', 'python-pip']
+    apt_packages = ['build-essential',
+                    'git',
+                    'make',
+                    'nginx',
+                    'python-pip',]
     fetch.apt_install(fetch.filter_installed_packages(apt_packages))
 
+
+def create_cert():
+    """
+    Create the certificate for the k8s tls enablement.
+    """
+    common_name = hookenv.unit_get('public-address')
+    nginx = path('/usr/share/nginx')
+    if not nginx.isdir():
+        nginx.makedirs_p()
+    # The cert and key go in the nginx directory so the template can resolve.
+    cert_file = nginx / 'server.crt'
+    key_file = nginx / 'server.key'
+    if cert_file.exists():
+        hookenv.log('Keeping the exising certificate.', 'WARNING')
+        return
+    else:
+        hookenv.log('Generating self signed certificate.', 'INFO')
+        # Generate the self signed certificate.
+        ssl.generate_selfsigned(key_file, cert_file, cn=common_name)
 
 
 def update_rc_files(strings):
     """
-     Preseed the bash environment for ubuntu and root with K8's env vars to
-     make interfacing with the api easier. (see: kubectrl docs)
+    Preseed the bash environment for ubuntu and root with K8's env vars to
+    make interfacing with the api easier. (see: kubectrl docs)
     """
     rc_files = [path('/home/ubuntu/.bashrc'), path('/root/.bashrc')]
     for rc_file in rc_files:
