@@ -43,8 +43,9 @@ class TestInstallHook():
         """
         Test an unhappy path if the bashrc/users do not exist.
         """
+        p = [Path('/home/deadbeefdoesnotexist/.bashrc')]
         with pytest.raises(OSError) as exinfo:
-            install.update_rc_files(['test1','test2'])
+            install.update_rc_files(['test1','test2'], rc_files=p)
 
     @patch('install.fetch')
     @patch('install.hookenv')
@@ -54,7 +55,7 @@ class TestInstallHook():
         kubes.
         """
         pkgs = ['build-essential', 'git',
-                'make', 'nginx', 'python-pip']
+                'make', 'nginx', 'python-pip', 'docker.io']
         install.install_packages()
         hemock.log.assert_called_with('Installing Debian packages')
         ftmock.filter_installed_packages.assert_called_with(pkgs)
@@ -101,8 +102,8 @@ class TestInstallHook():
         ]
 
         install.install()
-        crmock.assert_called_once()
-        dgmock.assert_called_once()
-        crmock.assert_called_once()
+
         urmock.assert_called_with(strings)
         hemock.open_port.assert_called_with(8080)
+		hemock.open_port.assert_called_with(6443)
+		hemock.open_port.assert_called_with(443)
