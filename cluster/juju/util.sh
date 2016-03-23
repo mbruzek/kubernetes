@@ -29,7 +29,7 @@ source "${JUJU_PATH}/${KUBE_CONFIG_FILE-config-default.sh}"
 # providers/distros - but I'm super familiar with ubuntu so assume that for now.
 source ${JUJU_PATH}/prereqs/ubuntu-juju.sh
 export JUJU_REPOSITORY=${JUJU_PATH}/charms
-KUBE_BUNDLE_PATH=${JUJU_PATH}/bundles/local.
+KUBE_BUNDLE_PATH=${JUJU_PATH}/bundles/local.yaml
 # The destination directory for the kubectl binary file.
 KUBECTL_DIR=${KUBE_ROOT}/platforms/linux/amd64
 
