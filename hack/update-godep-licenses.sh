@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Copyright 2015 The Kubernetes Authors All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -131,7 +131,8 @@ process_content () {
     for f in ${remote_files[@]}; do
       file_state "${package_root_url}/master/${f}" && continue
       if ! FILE_CONTENT[${package}-${type}]="$(\
-          curl --fail -s https://${package_root_url}/master/${f})" || \
+          curl --fail --retry 10 -s \
+           https://${package_root_url}/master/${f})" || \
          ! $(echo "${FILE_CONTENT[${package}-${type}]-}" |\
           egrep -qw "${ensure_pattern}") ||
          [[ "${FILE_CONTENT[${package}-${type}]-}" =~ \<\ *html ]] ; then

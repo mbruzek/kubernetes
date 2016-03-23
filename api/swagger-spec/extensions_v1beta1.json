@@ -626,7 +626,7 @@
       "type": "v1beta1.DaemonSetList",
       "method": "GET",
       "summary": "list or watch objects of kind DaemonSet",
-      "nickname": "listDaemonSet",
+      "nickname": "listNamespacedDaemonSet",
       "parameters": [
        {
         "type": "string",
@@ -702,7 +702,7 @@
       "type": "json.WatchEvent",
       "method": "GET",
       "summary": "watch individual changes to a list of DaemonSet",
-      "nickname": "watchDaemonSetList",
+      "nickname": "watchNamespacedDaemonSetList",
       "parameters": [
        {
         "type": "string",
@@ -1451,7 +1451,7 @@
       "type": "v1beta1.DeploymentList",
       "method": "GET",
       "summary": "list or watch objects of kind Deployment",
-      "nickname": "listDeployment",
+      "nickname": "listNamespacedDeployment",
       "parameters": [
        {
         "type": "string",
@@ -1527,7 +1527,7 @@
       "type": "json.WatchEvent",
       "method": "GET",
       "summary": "watch individual changes to a list of Deployment",
-      "nickname": "watchDeploymentList",
+      "nickname": "watchNamespacedDeploymentList",
       "parameters": [
        {
         "type": "string",
@@ -2498,7 +2498,7 @@
       "type": "v1beta1.HorizontalPodAutoscalerList",
       "method": "GET",
       "summary": "list or watch objects of kind HorizontalPodAutoscaler",
-      "nickname": "listHorizontalPodAutoscaler",
+      "nickname": "listNamespacedHorizontalPodAutoscaler",
       "parameters": [
        {
         "type": "string",
@@ -2574,7 +2574,7 @@
       "type": "json.WatchEvent",
       "method": "GET",
       "summary": "watch individual changes to a list of HorizontalPodAutoscaler",
-      "nickname": "watchHorizontalPodAutoscalerList",
+      "nickname": "watchNamespacedHorizontalPodAutoscalerList",
       "parameters": [
        {
         "type": "string",
@@ -3323,7 +3323,7 @@
       "type": "v1beta1.IngressList",
       "method": "GET",
       "summary": "list or watch objects of kind Ingress",
-      "nickname": "listIngress",
+      "nickname": "listNamespacedIngress",
       "parameters": [
        {
         "type": "string",
@@ -3399,7 +3399,7 @@
       "type": "json.WatchEvent",
       "method": "GET",
       "summary": "watch individual changes to a list of Ingress",
-      "nickname": "watchIngressList",
+      "nickname": "watchNamespacedIngressList",
       "parameters": [
        {
         "type": "string",
@@ -4148,7 +4148,7 @@
       "type": "v1beta1.JobList",
       "method": "GET",
       "summary": "list or watch objects of kind Job",
-      "nickname": "listJob",
+      "nickname": "listNamespacedJob",
       "parameters": [
        {
         "type": "string",
@@ -4224,7 +4224,7 @@
       "type": "json.WatchEvent",
       "method": "GET",
       "summary": "watch individual changes to a list of Job",
-      "nickname": "watchJobList",
+      "nickname": "watchNamespacedJobList",
       "parameters": [
        {
         "type": "string",
@@ -4973,7 +4973,7 @@
       "type": "v1beta1.ReplicaSetList",
       "method": "GET",
       "summary": "list or watch objects of kind ReplicaSet",
-      "nickname": "listReplicaSet",
+      "nickname": "listNamespacedReplicaSet",
       "parameters": [
        {
         "type": "string",
@@ -5049,7 +5049,7 @@
       "type": "json.WatchEvent",
       "method": "GET",
       "summary": "watch individual changes to a list of ReplicaSet",
-      "nickname": "watchReplicaSetList",
+      "nickname": "watchNamespacedReplicaSetList",
       "parameters": [
        {
         "type": "string",
@@ -5505,7 +5505,7 @@
     "description": "API at /apis/extensions/v1beta1",
     "operations": [
      {
-      "type": "void",
+      "type": "unversioned.APIResourceList",
       "method": "GET",
       "summary": "get available resources",
       "nickname": "getAPIResources",
@@ -7894,6 +7894,58 @@
       "type": "integer",
       "format": "int64",
       "description": "ObservedGeneration reflects the generation of the most recently observed ReplicaSet."
+     }
+    }
+   },
+   "unversioned.APIResourceList": {
+    "id": "unversioned.APIResourceList",
+    "description": "APIResourceList is a list of APIResource, it is used to expose the name of the resources supported in a specific group and version, and if the resource is namespaced.",
+    "required": [
+     "groupVersion",
+     "resources"
+    ],
+    "properties": {
+     "kind": {
+      "type": "string",
+      "description": "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds"
+     },
+     "apiVersion": {
+      "type": "string",
+      "description": "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#resources"
+     },
+     "groupVersion": {
+      "type": "string",
+      "description": "groupVersion is the group and version this APIResourceList is for."
+     },
+     "resources": {
+      "type": "array",
+      "items": {
+       "$ref": "unversioned.APIResource"
+      },
+      "description": "resources contains the name of the resources and if they are namespaced."
+     }
+    }
+   },
+   "unversioned.APIResource": {
+    "id": "unversioned.APIResource",
+    "description": "APIResource specifies the name of a resource and whether it is namespaced.",
+    "required": [
+     "name",
+     "namespaced",
+     "kind"
+    ],
+    "properties": {
+     "name": {
+      "type": "string",
+      "description": "name is the name of the resource."
+     },
+     "namespaced": {
+      "type": "boolean",
+      "description": "namespaced indicates if a resource is namespaced or not."
+     },
+     "kind": {
+      "type": "string",
+      "description": "kind is the kind for the resource (e.g. 'Foo' is the kind for a resource 'foo')"
      }
     }
    }
