@@ -532,6 +532,9 @@ var _ = framework.KubeDescribe("Kubectl client", func() {
 	framework.KubeDescribe("Kubectl describe", func() {
 		It("should check if kubectl describe prints relevant information for rc and pods [Conformance]", func() {
 			framework.SkipUnlessServerVersionGTE(nodePortsOptionalVersion, c)
+			kv, err := framework.KubectlVersion()
+			Expect(err).NotTo(HaveOccurred())
+			framework.SkipUnlessServerVersionGTE(kv, c)
 			controllerJson := readTestFileOrDie(redisControllerFilename)
 			serviceJson := readTestFileOrDie(redisServiceFilename)
 
@@ -541,6 +544,7 @@ var _ = framework.KubeDescribe("Kubectl client", func() {
 
 			By("Waiting for Redis master to start.")
 			waitForOrFailWithDebug(1)
+
 			// Pod
 			forEachPod(func(pod api.Pod) {
 				output := framework.RunKubectlOrDie("describe", "pod", pod.Name, nsFlag)
@@ -652,10 +656,15 @@ var _ = framework.KubeDescribe("Kubectl client", func() {
 				err := wait.Poll(framework.Poll, timeout, func() (bool, error) {
 					endpoints, err := c.Endpoints(ns).Get(name)
 					if err != nil {
-						if apierrs.IsNotFound(err) {
+						// log the real error
+						framework.Logf("Get endpoints failed (interval %v): %v", framework.Poll, err)
+
+						// if the error is API not found or could not find default credentials or TLS handshake timeout, try again
+						if apierrs.IsNotFound(err) ||
+							apierrs.IsUnauthorized(err) ||
+							apierrs.IsServerTimeout(err) {
 							err = nil
 						}
-						framework.Logf("Get endpoints failed (interval %v): %v", framework.Poll, err)
 						return false, err
 					}
 
@@ -987,7 +996,17 @@ var _ = framework.KubeDescribe("Kubectl client", func() {
 		})
 
 		AfterEach(func() {
-			framework.RunKubectlOrDie("delete", "deployment", dName, nsFlag)
+			err := wait.Poll(framework.Poll, 2*time.Minute, func() (bool, error) {
+				out, err := framework.RunKubectl("delete", "deployment", dName, nsFlag)
+				if err != nil {
+					if strings.Contains(err.Error(), "could not find default credentials") {
+						err = nil
+					}
+					return false, fmt.Errorf("kubectl delete failed output: %s, err: %v", out, err)
+				}
+				return true, nil
+			})
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should create a deployment from an image [Conformance]", func() {

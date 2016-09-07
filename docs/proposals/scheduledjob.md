@@ -21,7 +21,7 @@ refer to the docs that go with that version.
 <!-- TAG RELEASE_LINK, added by the munger automatically -->
 <strong>
 The latest release of this document can be found
-[here](http://releases.k8s.io/release-1.3/docs/proposals/scheduledjob.md).
+[here](http://releases.k8s.io/release-1.4/docs/proposals/scheduledjob.md).
 
 Documentation for other releases can be found at
 [releases.k8s.io](http://releases.k8s.io).
@@ -52,7 +52,7 @@ There are also similar solutions available, already:
 ## Use Cases
 
 1. Be able to schedule a job execution at a given point in time.
-1. Be able to create a periodic job, eg. database backup, sending emails.
+1. Be able to create a periodic job, e.g. database backup, sending emails.
 
 
 ## Motivation

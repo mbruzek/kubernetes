@@ -22,7 +22,7 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/resource"
 	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/apis/extensions"
+	"k8s.io/kubernetes/pkg/apis/storage"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/test/e2e/framework"
 
@@ -114,13 +114,15 @@ var _ = framework.KubeDescribe("Dynamic provisioning", func() {
 	})
 
 	framework.KubeDescribe("DynamicProvisioner", func() {
-		It("should create and delete persistent volumes", func() {
+		It("should create and delete persistent volumes [Slow]", func() {
+			// added until the GKE startup includes storage.k8s.io/v1beta1
+			framework.SkipIfProviderIs("gke")
 			framework.SkipUnlessProviderIs("openstack", "gce", "aws", "gke")
 
 			By("creating a StorageClass")
 			class := newStorageClass()
-			_, err := c.Extensions().StorageClasses().Create(class)
-			defer c.Extensions().StorageClasses().Delete(class.Name)
+			_, err := c.Storage().StorageClasses().Create(class)
+			defer c.Storage().StorageClasses().Delete(class.Name)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating a claim with a dynamic provisioning annotation")
@@ -136,7 +138,7 @@ var _ = framework.KubeDescribe("Dynamic provisioning", func() {
 	})
 
 	framework.KubeDescribe("DynamicProvisioner Alpha", func() {
-		It("should create and delete alpha persistent volumes", func() {
+		It("should create and delete alpha persistent volumes [Slow]", func() {
 			framework.SkipUnlessProviderIs("openstack", "gce", "aws", "gke")
 
 			By("creating a claim with an alpha dynamic provisioning annotation")
@@ -231,7 +233,7 @@ func runInPodWithVolume(c *client.Client, ns, claimName, command string) {
 	framework.ExpectNoError(framework.WaitForPodSuccessInNamespaceSlow(c, pod.Name, pod.Spec.Containers[0].Name, pod.Namespace))
 }
 
-func newStorageClass() *extensions.StorageClass {
+func newStorageClass() *storage.StorageClass {
 	var pluginName string
 
 	switch {
@@ -243,7 +245,7 @@ func newStorageClass() *extensions.StorageClass {
 		pluginName = "kubernetes.io/cinder"
 	}
 
-	return &extensions.StorageClass{
+	return &storage.StorageClass{
 		TypeMeta: unversioned.TypeMeta{
 			Kind: "StorageClass",
 		},

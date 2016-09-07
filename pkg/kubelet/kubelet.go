@@ -77,6 +77,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/util/sliceutils"
 	"k8s.io/kubernetes/pkg/kubelet/volumemanager"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/security/apparmor"
 	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/bandwidth"
 	"k8s.io/kubernetes/pkg/util/clock"
@@ -179,7 +180,7 @@ type Option func(*Kubelet)
 
 // bootstrapping interface for kubelet, targets the initialization protocol
 type KubeletBootstrap interface {
-	GetConfiguration() *componentconfig.KubeletConfiguration
+	GetConfiguration() componentconfig.KubeletConfiguration
 	BirthCry()
 	StartGarbageCollection()
 	ListenAndServe(address net.IP, port uint, tlsOptions *server.TLSOptions, auth server.AuthInterface, enableDebuggingHandlers bool)
@@ -736,7 +737,8 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 	klet.AddPodSyncLoopHandler(activeDeadlineHandler)
 	klet.AddPodSyncHandler(activeDeadlineHandler)
 
-	klet.AddPodAdmitHandler(lifecycle.NewAppArmorAdmitHandler(kubeCfg.ContainerRuntime))
+	klet.appArmorValidator = apparmor.NewValidator(kubeCfg.ContainerRuntime)
+	klet.AddPodAdmitHandler(lifecycle.NewAppArmorAdmitHandler(klet.appArmorValidator))
 
 	// apply functional Option's
 	for _, opt := range kubeDeps.Options {
@@ -745,7 +747,7 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 
 	// Finally, put the most recent version of the config on the Kubelet, so
 	// people can see how it was configured.
-	klet.kubeletConfiguration = kubeCfg
+	klet.kubeletConfiguration = *kubeCfg
 	return klet, nil
 }
 
@@ -759,7 +761,7 @@ type nodeLister interface {
 
 // Kubelet is the main kubelet implementation.
 type Kubelet struct {
-	kubeletConfiguration *componentconfig.KubeletConfiguration
+	kubeletConfiguration componentconfig.KubeletConfiguration
 
 	hostname      string
 	nodeName      string
@@ -1041,6 +1043,9 @@ type Kubelet struct {
 
 	// The bit of the fwmark space to mark packets for dropping.
 	iptablesDropBit int
+
+	// The AppArmor validator for checking whether AppArmor is supported.
+	appArmorValidator apparmor.Validator
 }
 
 // setupDataDirs creates:
@@ -3043,7 +3048,7 @@ func (kl *Kubelet) PortForward(podFullName string, podUID types.UID, port uint16
 }
 
 // GetConfiguration returns the KubeletConfiguration used to configure the kubelet.
-func (kl *Kubelet) GetConfiguration() *componentconfig.KubeletConfiguration {
+func (kl *Kubelet) GetConfiguration() componentconfig.KubeletConfiguration {
 	return kl.kubeletConfiguration
 }
 

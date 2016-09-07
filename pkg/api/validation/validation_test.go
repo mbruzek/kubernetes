@@ -7992,3 +7992,50 @@ func TestValidateSysctls(t *testing.T) {
 		}
 	}
 }
+
+func newNodeNameEndpoint(nodeName string) *api.Endpoints {
+	ep := &api.Endpoints{
+		ObjectMeta: api.ObjectMeta{
+			Name:            "foo",
+			Namespace:       api.NamespaceDefault,
+			ResourceVersion: "1",
+		},
+		Subsets: []api.EndpointSubset{
+			{
+				NotReadyAddresses: []api.EndpointAddress{},
+				Ports:             []api.EndpointPort{{Name: "https", Port: 443, Protocol: "TCP"}},
+				Addresses: []api.EndpointAddress{
+					{
+						IP:       "8.8.8.8",
+						Hostname: "zookeeper1",
+						NodeName: &nodeName}}}}}
+	return ep
+}
+
+func TestEndpointAddressNodeNameUpdateRestrictions(t *testing.T) {
+	oldEndpoint := newNodeNameEndpoint("kubernetes-minion-setup-by-backend")
+	updatedEndpoint := newNodeNameEndpoint("kubernetes-changed-nodename")
+	// Check that NodeName cannot be changed during update (if already set)
+	errList := ValidateEndpoints(updatedEndpoint)
+	errList = append(errList, ValidateEndpointsUpdate(updatedEndpoint, oldEndpoint)...)
+	if len(errList) == 0 {
+		t.Error("Endpoint should not allow changing of Subset.Addresses.NodeName on update")
+	}
+}
+
+func TestEndpointAddressNodeNameInvalidDNSSubdomain(t *testing.T) {
+	// Check NodeName DNS validation
+	endpoint := newNodeNameEndpoint("illegal*.nodename")
+	errList := ValidateEndpoints(endpoint)
+	if len(errList) == 0 {
+		t.Error("Endpoint should reject invalid NodeName")
+	}
+}
+
+func TestEndpointAddressNodeNameCanBeAnIPAddress(t *testing.T) {
+	endpoint := newNodeNameEndpoint("10.10.1.1")
+	errList := ValidateEndpoints(endpoint)
+	if len(errList) != 0 {
+		t.Error("Endpoint should accept a NodeName that is an IP address")
+	}
+}

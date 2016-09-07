@@ -105,28 +105,28 @@ kube::build::get_docker_wrapped_binaries() {
           kube-apiserver,busybox
           kube-controller-manager,busybox
           kube-scheduler,busybox
-          kube-proxy,gcr.io/google_containers/debian-iptables-amd64:v3
+          kube-proxy,gcr.io/google_containers/debian-iptables-amd64:v4
         );;
     "arm")
         local targets=(
           kube-apiserver,armel/busybox
           kube-controller-manager,armel/busybox
           kube-scheduler,armel/busybox
-          kube-proxy,gcr.io/google_containers/debian-iptables-arm:v3
+          kube-proxy,gcr.io/google_containers/debian-iptables-arm:v4
         );;
     "arm64")
         local targets=(
           kube-apiserver,aarch64/busybox
           kube-controller-manager,aarch64/busybox
           kube-scheduler,aarch64/busybox
-          kube-proxy,gcr.io/google_containers/debian-iptables-arm64:v3
+          kube-proxy,gcr.io/google_containers/debian-iptables-arm64:v4
         );;
     "ppc64le")
         local targets=(
           kube-apiserver,ppc64le/busybox
           kube-controller-manager,ppc64le/busybox
           kube-scheduler,ppc64le/busybox
-          kube-proxy,gcr.io/google_containers/debian-iptables-ppc64le:v3
+          kube-proxy,gcr.io/google_containers/debian-iptables-ppc64le:v4
         );;
   esac
 
@@ -943,6 +943,7 @@ function kube::release::package_kube_manifests_tarball() {
   cp "${salt_dir}/kube-addons/kube-addon-manager.yaml" "${dst_dir}"
   cp "${salt_dir}/l7-gcp/glbc.manifest" "${dst_dir}"
   cp "${salt_dir}/rescheduler/rescheduler.manifest" "${dst_dir}/"
+  cp "${salt_dir}/e2e-image-puller/e2e-image-puller.manifest" "${dst_dir}/"
   cp "${KUBE_ROOT}/cluster/gce/trusty/configure-helper.sh" "${dst_dir}/trusty-configure-helper.sh"
   cp "${KUBE_ROOT}/cluster/gce/gci/configure-helper.sh" "${dst_dir}/gci-configure-helper.sh"
   cp "${KUBE_ROOT}/cluster/gce/gci/health-monitor.sh" "${dst_dir}/health-monitor.sh"
@@ -1028,10 +1029,11 @@ function kube::release::package_full_tarball() {
   mkdir -p "${release_stage}/third_party"
   cp -R "${KUBE_ROOT}/third_party/htpasswd" "${release_stage}/third_party/htpasswd"
 
-  # Include only federation/cluster and federation/manifests
+  # Include only federation/cluster, federation/manifests and federation/deploy
   mkdir "${release_stage}/federation"
   cp -R "${KUBE_ROOT}/federation/cluster" "${release_stage}/federation/"
   cp -R "${KUBE_ROOT}/federation/manifests" "${release_stage}/federation/"
+  cp -R "${KUBE_ROOT}/federation/deploy" "${release_stage}/federation/"
 
   cp -R "${KUBE_ROOT}/examples" "${release_stage}/"
   cp -R "${KUBE_ROOT}/docs" "${release_stage}/"

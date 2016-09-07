@@ -77,7 +77,7 @@ func TestReplicaSetController(t *testing.T) {
 	replicaSetReviewDelay = 10 * time.Millisecond
 	clusterAvailableDelay = 20 * time.Millisecond
 	clusterUnavailableDelay = 60 * time.Millisecond
-	allReplicaSetReviewDealy = 120 * time.Millisecond
+	allReplicaSetReviewDelay = 120 * time.Millisecond
 
 	fedclientset := fedclientfake.NewSimpleClientset()
 	fedrswatch := watch.NewFake()
@@ -166,6 +166,7 @@ func newReplicaSetWithReplicas(name string, replicas int32) *extensionsv1.Replic
 		ObjectMeta: apiv1.ObjectMeta{
 			Name:      name,
 			Namespace: apiv1.NamespaceDefault,
+			SelfLink:  "/api/v1/namespaces/default/replicasets/name",
 		},
 		Spec: extensionsv1.ReplicaSetSpec{
 			Replicas: &replicas,

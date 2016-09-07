@@ -416,6 +416,7 @@ var _ = framework.KubeDescribe("Pods", func() {
 
 		// Make a client pod that verifies that it has the service environment variables.
 		podName := "client-envvars-" + string(uuid.NewUUID())
+		const containerName = "env3cont"
 		pod := &api.Pod{
 			ObjectMeta: api.ObjectMeta{
 				Name:   podName,
@@ -424,7 +425,7 @@ var _ = framework.KubeDescribe("Pods", func() {
 			Spec: api.PodSpec{
 				Containers: []api.Container{
 					{
-						Name:    "env3cont",
+						Name:    containerName,
 						Image:   "gcr.io/google_containers/busybox:1.24",
 						Command: []string{"sh", "-c", "env"},
 					},
@@ -433,7 +434,10 @@ var _ = framework.KubeDescribe("Pods", func() {
 			},
 		}
 
-		f.TestContainerOutput("service env", pod, 0, []string{
+		// It's possible for the Pod to be created before the Kubelet is updated with the new
+		// service. In that case, we just retry.
+		const maxRetries = 3
+		expectedVars := []string{
 			"FOOSERVICE_SERVICE_HOST=",
 			"FOOSERVICE_SERVICE_PORT=",
 			"FOOSERVICE_PORT=",
@@ -441,7 +445,10 @@ var _ = framework.KubeDescribe("Pods", func() {
 			"FOOSERVICE_PORT_8765_TCP_PROTO=",
 			"FOOSERVICE_PORT_8765_TCP=",
 			"FOOSERVICE_PORT_8765_TCP_ADDR=",
-		})
+		}
+		framework.ExpectNoErrorWithRetries(func() error {
+			return f.MatchContainerOutput(pod, containerName, expectedVars, ContainSubstring)
+		}, maxRetries, "Container should have service environment variables set")
 	})
 
 	It("should support remote command execution over websockets", func() {
@@ -491,28 +498,31 @@ var _ = framework.KubeDescribe("Pods", func() {
 		defer ws.Close()
 
 		buf := &bytes.Buffer{}
-		for {
-			var msg []byte
-			if err := websocket.Message.Receive(ws, &msg); err != nil {
-				if err == io.EOF {
-					break
+		Eventually(func() error {
+			for {
+				var msg []byte
+				if err := websocket.Message.Receive(ws, &msg); err != nil {
+					if err == io.EOF {
+						break
+					}
+					framework.Failf("Failed to read completely from websocket %s: %v", url.String(), err)
 				}
-				framework.Failf("Failed to read completely from websocket %s: %v", url.String(), err)
+				if len(msg) == 0 {
+					continue
+				}
+				if msg[0] != 1 {
+					framework.Failf("Got message from server that didn't start with channel 1 (STDOUT): %v", msg)
+				}
+				buf.Write(msg[1:])
 			}
-			if len(msg) == 0 {
-				continue
+			if buf.Len() == 0 {
+				return fmt.Errorf("Unexpected output from server")
 			}
-			if msg[0] != 1 {
-				framework.Failf("Got message from server that didn't start with channel 1 (STDOUT): %v", msg)
+			if !strings.Contains(buf.String(), "nameserver") {
+				return fmt.Errorf("Expected to find 'nameserver' in %q", buf.String())
 			}
-			buf.Write(msg[1:])
-		}
-		if buf.Len() == 0 {
-			framework.Failf("Unexpected output from server")
-		}
-		if !strings.Contains(buf.String(), "nameserver") {
-			framework.Failf("Expected to find 'nameserver' in %q", buf.String())
-		}
+			return nil
+		}, time.Minute, 10*time.Second).Should(BeNil())
 	})
 
 	It("should support retrieving logs from the container over websockets", func() {
@@ -530,17 +540,13 @@ var _ = framework.KubeDescribe("Pods", func() {
 					{
 						Name:    "main",
 						Image:   "gcr.io/google_containers/busybox:1.24",
-						Command: []string{"/bin/sh", "-c", "echo container is alive; sleep 600"},
+						Command: []string{"/bin/sh", "-c", "echo container is alive; sleep 10000"},
 					},
 				},
 			},
 		}
 
 		By("submitting the pod to kubernetes")
-		defer func() {
-			By("deleting the pod")
-			podClient.Delete(pod.Name, api.NewDeleteOptions(0))
-		}()
 		podClient.CreateSync(pod)
 
 		req := f.Client.Get().
@@ -566,7 +572,7 @@ var _ = framework.KubeDescribe("Pods", func() {
 				}
 				framework.Failf("Failed to read completely from websocket %s: %v", url.String(), err)
 			}
-			if len(msg) == 0 {
+			if len(strings.TrimSpace(string(msg))) == 0 {
 				continue
 			}
 			buf.Write(msg)

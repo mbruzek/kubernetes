@@ -66,7 +66,7 @@ KUBE_GOVERALLS_BIN=${KUBE_GOVERALLS_BIN:-}
 # "v1,compute/v1alpha1,experimental/v1alpha2;v1,compute/v2,experimental/v1alpha3"
 # FIXME: due to current implementation of a test client (see: pkg/api/testapi/testapi.go)
 # ONLY the last version is tested in each group.
-KUBE_TEST_API_VERSIONS=${KUBE_TEST_API_VERSIONS:-"v1,apps/v1alpha1,authentication.k8s.io/v1beta1,authorization.k8s.io/v1beta1,autoscaling/v1,batch/v1,batch/v2alpha1,certificates/v1alpha1,extensions/v1beta1,federation/v1beta1,policy/v1alpha1,rbac.authorization.k8s.io/v1alpha1,imagepolicy.k8s.io/v1alpha1"}
+KUBE_TEST_API_VERSIONS=${KUBE_TEST_API_VERSIONS:-"v1,apps/v1alpha1,authentication.k8s.io/v1beta1,authorization.k8s.io/v1beta1,autoscaling/v1,batch/v1,batch/v2alpha1,certificates.k8s.io/v1alpha1,extensions/v1beta1,federation/v1beta1,policy/v1alpha1,rbac.authorization.k8s.io/v1alpha1,imagepolicy.k8s.io/v1alpha1,storage.k8s.io/v1beta1"}
 # once we have multiple group supports
 # Create a junit-style XML test report in this directory if set.
 KUBE_JUNIT_REPORT_DIR=${KUBE_JUNIT_REPORT_DIR:-}
@@ -194,6 +194,12 @@ runTests() {
   # command, which is much faster.
   if [[ ! ${KUBE_COVER} =~ ^[yY]$ ]]; then
     kube::log::status "Running tests without code coverage"
+    # `go test` does not install the things it builds. `go test -i` installs
+    # the build artifacts but doesn't run the tests.  The two together provide
+    # a large speedup for tests that do not need to be rebuilt.
+    go test -i "${goflags[@]:+${goflags[@]}}" \
+      ${KUBE_RACE} ${KUBE_TIMEOUT} "${@+${@/#/${KUBE_GO_PACKAGE}/}}" \
+     "${testargs[@]:+${testargs[@]}}"
     go test "${goflags[@]:+${goflags[@]}}" \
       ${KUBE_RACE} ${KUBE_TIMEOUT} "${@+${@/#/${KUBE_GO_PACKAGE}/}}" \
      "${testargs[@]:+${testargs[@]}}" \
@@ -220,8 +226,19 @@ runTests() {
   # separate files.
   # cmd/libs/go2idl/generator is fragile when run under coverage, so ignore it for now.
   # see: https://github.com/kubernetes/kubernetes/issues/24967
+  #
+  # `go test` does not install the things it builds. `go test -i` installs
+  # the build artifacts but doesn't run the tests.  The two together provide
+  # a large speedup for tests that do not need to be rebuilt.
   printf "%s\n" "${@}" | grep -v "cmd/libs/go2idl/generator"| xargs -I{} -n1 -P${KUBE_COVERPROCS} \
     bash -c "set -o pipefail; _pkg=\"{}\"; _pkg_out=\${_pkg//\//_}; \
+        go test -i ${goflags[@]:+${goflags[@]}} \
+          ${KUBE_RACE} \
+          ${KUBE_TIMEOUT} \
+          -cover -covermode=\"${KUBE_COVERMODE}\" \
+          -coverprofile=\"${cover_report_dir}/\${_pkg}/${cover_profile}\" \
+          \"${KUBE_GO_PACKAGE}/\${_pkg}\" \
+          ${testargs[@]:+${testargs[@]}}
         go test ${goflags[@]:+${goflags[@]}} \
           ${KUBE_RACE} \
           ${KUBE_TIMEOUT} \

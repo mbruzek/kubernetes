@@ -1,4 +1,5 @@
 cluster/addons/fluentd-elasticsearch/es-image
+cluster/images/etcd/attachlease
 cmd/gendocs
 cmd/genkubedocs
 cmd/genman
@@ -71,6 +72,8 @@ pkg/apis/extensions/v1beta1
 pkg/apis/imagepolicy/install
 pkg/apis/policy/install
 pkg/apis/rbac/install
+pkg/apis/storage/install
+pkg/apis/storage/validation
 pkg/apiserver/audit
 pkg/auth/authenticator
 pkg/auth/authorizer/union
@@ -208,6 +211,8 @@ test/images/serve_hostname
 test/integration/discoverysummarizer
 test/integration/examples
 test/integration/federation
+test/integration/metrics
+test/integration/objectmeta
 test/integration/openshift
 test/soak/cauldron
 test/soak/serve_hostnames

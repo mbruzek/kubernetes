@@ -66,6 +66,9 @@ var (
 func NewCmdScale(f *cmdutil.Factory, out io.Writer) *cobra.Command {
 	options := &ScaleOptions{}
 
+	validArgs := []string{"deployment", "replicaset", "replicationcontroller", "job"}
+	argAliases := kubectl.ResourceAliases(validArgs)
+
 	cmd := &cobra.Command{
 		Use: "scale [--resource-version=version] [--current-replicas=count] --replicas=COUNT (-f FILENAME | TYPE NAME)",
 		// resize is deprecated
@@ -79,6 +82,8 @@ func NewCmdScale(f *cmdutil.Factory, out io.Writer) *cobra.Command {
 			err := RunScale(f, out, cmd, args, shortOutput, options)
 			cmdutil.CheckErr(err)
 		},
+		ValidArgs:  validArgs,
+		ArgAliases: argAliases,
 	}
 	cmd.Flags().String("resource-version", "", "Precondition for resource version. Requires that the current resource version match this value in order to scale.")
 	cmd.Flags().Int("current-replicas", -1, "Precondition for current size. Requires that the current size of the resource match this value in order to scale.")
@@ -101,11 +106,6 @@ func RunScale(f *cmdutil.Factory, out io.Writer, cmd *cobra.Command, args []stri
 		printDeprecationWarning("scale", "resize")
 	}
 
-	count := cmdutil.GetFlagInt(cmd, "replicas")
-	if count < 0 {
-		return cmdutil.UsageError(cmd, "--replicas=COUNT is required, and COUNT must be greater than or equal to 0")
-	}
-
 	cmdNamespace, enforceNamespace, err := f.DefaultNamespace()
 	if err != nil {
 		return err
@@ -120,8 +120,16 @@ func RunScale(f *cmdutil.Factory, out io.Writer, cmd *cobra.Command, args []stri
 		Flatten().
 		Do()
 	err = r.Err()
+	if resource.IsUsageError(err) {
+		return cmdutil.UsageError(cmd, err.Error())
+	}
 	if err != nil {
 		return err
+	}
+
+	count := cmdutil.GetFlagInt(cmd, "replicas")
+	if count < 0 {
+		return cmdutil.UsageError(cmd, "The --replicas=COUNT flag is required, and COUNT must be greater than or equal to 0")
 	}
 
 	infos := []*resource.Info{}

@@ -73,7 +73,7 @@ func density30AddonResourceVerifier(numNodes int) map[string]framework.ResourceC
 	framework.Logf("Setting resource constraings for provider: %s", framework.TestContext.Provider)
 	if framework.ProviderIs("kubemark") {
 		if numNodes <= 5 {
-			apiserverCPU = 0.15
+			apiserverCPU = 0.25
 			apiserverMem = 150 * (1024 * 1024)
 			controllerCPU = 0.1
 			controllerMem = 100 * (1024 * 1024)
@@ -87,7 +87,7 @@ func density30AddonResourceVerifier(numNodes int) map[string]framework.ResourceC
 			schedulerCPU = 0.75
 			schedulerMem = 500 * (1024 * 1024)
 		} else if numNodes <= 500 {
-			apiserverCPU = 2.25
+			apiserverCPU = 2.5
 			apiserverMem = 3400 * (1024 * 1024)
 			controllerCPU = 1.3
 			controllerMem = 1100 * (1024 * 1024)

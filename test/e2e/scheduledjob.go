@@ -77,7 +77,7 @@ var _ = framework.KubeDescribe("ScheduledJob", func() {
 	})
 
 	// suspended should not schedule jobs
-	It("should not schedule jobs when suspended", func() {
+	It("should not schedule jobs when suspended [Slow]", func() {
 		By("Creating a suspended scheduledjob")
 		scheduledJob := newTestScheduledJob("suspended", "*/1 * * * ?", batch.AllowConcurrent, true)
 		scheduledJob.Spec.Suspend = newBool(true)
@@ -99,7 +99,7 @@ var _ = framework.KubeDescribe("ScheduledJob", func() {
 	})
 
 	// only single active job is allowed for ForbidConcurrent
-	It("should not schedule new jobs when ForbidConcurrent", func() {
+	It("should not schedule new jobs when ForbidConcurrent [Slow]", func() {
 		By("Creating a ForbidConcurrent scheduledjob")
 		scheduledJob := newTestScheduledJob("forbid", "*/1 * * * ?", batch.ForbidConcurrent, true)
 		scheduledJob, err := createScheduledJob(f.Client, f.Namespace.Name, scheduledJob)
@@ -275,8 +275,11 @@ func waitForJobReplaced(c *client.Client, ns, previousJobName string) error {
 		if err != nil {
 			return false, err
 		}
-		if len(jobs.Items) != 1 {
-			return false, fmt.Errorf("More than one job is running")
+		if len(jobs.Items) > 1 {
+			return false, fmt.Errorf("More than one job is running %+v", jobs.Items)
+		} else if len(jobs.Items) == 0 {
+			framework.Logf("Warning: Found 0 jobs in namespace %v", ns)
+			return false, nil
 		}
 		return jobs.Items[0].Name != previousJobName, nil
 	})

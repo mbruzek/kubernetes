@@ -37,6 +37,80 @@ var _ = framework.KubeDescribe("MemoryEviction [Slow] [Serial] [Disruptive]", fu
 	f := framework.NewDefaultFramework("eviction-test")
 
 	Context("when there is memory pressure", func() {
+		AfterEach(func() {
+			// Wait for the memory pressure condition to disappear from the node status before continuing.
+			By("waiting for the memory pressure condition on the node to disappear before ending the test.")
+			Eventually(func() error {
+				nodeList, err := f.Client.Nodes().List(api.ListOptions{})
+				if err != nil {
+					return fmt.Errorf("tried to get node list but got error: %v", err)
+				}
+				// Assuming that there is only one node, because this is a node e2e test.
+				if len(nodeList.Items) != 1 {
+					return fmt.Errorf("expected 1 node, but see %d. List: %v", len(nodeList.Items), nodeList.Items)
+				}
+				node := nodeList.Items[0]
+				_, pressure := api.GetNodeCondition(&node.Status, api.NodeMemoryPressure)
+				if pressure != nil && pressure.Status == api.ConditionTrue {
+					return fmt.Errorf("node is still reporting memory pressure condition: %s", pressure)
+				}
+				return nil
+			}, 5*time.Minute, 15*time.Second).Should(BeNil())
+
+			// Check available memory after condition disappears, just in case:
+			// Wait for available memory to decrease to a reasonable level before ending the test.
+			// This helps prevent interference with tests that start immediately after this one.
+			By("waiting for available memory to decrease to a reasonable level before ending the test.")
+			Eventually(func() error {
+				summary, err := getNodeSummary()
+				if err != nil {
+					return err
+				}
+				if summary.Node.Memory.AvailableBytes == nil {
+					return fmt.Errorf("summary.Node.Memory.AvailableBytes was nil, cannot get memory stats.")
+				}
+				if summary.Node.Memory.WorkingSetBytes == nil {
+					return fmt.Errorf("summary.Node.Memory.WorkingSetBytes was nil, cannot get memory stats.")
+				}
+				avail := *summary.Node.Memory.AvailableBytes
+				wset := *summary.Node.Memory.WorkingSetBytes
+
+				// memory limit = avail + wset
+				limit := avail + wset
+				halflimit := limit / 2
+
+				// Wait for at least half of memory limit to be available
+				if avail >= halflimit {
+					return nil
+				}
+				return fmt.Errorf("current available memory is: %d bytes. Expected at least %d bytes available.", avail, halflimit)
+			}, 5*time.Minute, 15*time.Second).Should(BeNil())
+
+			// TODO(mtaufen): 5 minute wait to stop flaky test bleeding while we figure out what is actually going on.
+			//                If related to pressure transition period in eviction manager, probably only need to wait
+			//                just over 30s becasue that is the transition period set for node e2e tests. But since we
+			//                know 5 min works and we don't know if transition period is the problem, wait 5 min for now.
+			time.Sleep(5 * time.Minute)
+
+			// Finally, try starting a new pod and wait for it to be scheduled and running.
+			// This is the final check to try to prevent interference with subsequent tests.
+			podName := "admit-best-effort-pod"
+			f.PodClient().CreateSync(&api.Pod{
+				ObjectMeta: api.ObjectMeta{
+					Name: podName,
+				},
+				Spec: api.PodSpec{
+					RestartPolicy: api.RestartPolicyNever,
+					Containers: []api.Container{
+						{
+							Image: ImageRegistry[pauseImage],
+							Name:  podName,
+						},
+					},
+				},
+			})
+		})
+
 		It("should evict pods in the correct order (besteffort first, then burstable, then guaranteed)", func() {
 			By("creating a guaranteed pod, a burstable pod, and a besteffort pod.")
 
@@ -96,70 +170,6 @@ var _ = framework.KubeDescribe("MemoryEviction [Slow] [Serial] [Disruptive]", fu
 
 			}, 60*time.Minute, 5*time.Second).Should(BeNil())
 
-			// Wait for the memory pressure condition to disappear from the node status before continuing.
-			Eventually(func() error {
-				nodeList, err := f.Client.Nodes().List(api.ListOptions{})
-				if err != nil {
-					return fmt.Errorf("tried to get node list but got error: %v", err)
-				}
-				// Assuming that there is only one node, because this is a node e2e test.
-				if len(nodeList.Items) != 1 {
-					return fmt.Errorf("expected 1 node, but see %d. List: %v", len(nodeList.Items), nodeList.Items)
-				}
-				node := nodeList.Items[0]
-				_, pressure := api.GetNodeCondition(&node.Status, api.NodeMemoryPressure)
-				if pressure != nil && pressure.Status == api.ConditionTrue {
-					return fmt.Errorf("node is still reporting memory pressure condition: %s", pressure)
-				}
-				return nil
-			}, 5*time.Minute, 15*time.Second).Should(BeNil())
-
-			// Check available memory after condition disappears, just in case:
-			// Wait for available memory to decrease to a reasonable level before ending the test.
-			// This helps prevent interference with tests that start immediately after this one.
-			By("waiting for available memory to decrease to a reasonable level before ending the test.")
-			Eventually(func() error {
-				summary, err := getNodeSummary()
-				if err != nil {
-					return err
-				}
-				if summary.Node.Memory.AvailableBytes == nil {
-					return fmt.Errorf("summary.Node.Memory.AvailableBytes was nil, cannot get memory stats.")
-				}
-				if summary.Node.Memory.WorkingSetBytes == nil {
-					return fmt.Errorf("summary.Node.Memory.WorkingSetBytes was nil, cannot get memory stats.")
-				}
-				avail := *summary.Node.Memory.AvailableBytes
-				wset := *summary.Node.Memory.WorkingSetBytes
-
-				// memory limit = avail + wset
-				limit := avail + wset
-				halflimit := limit / 2
-
-				// Wait for at least half of memory limit to be available
-				if avail >= halflimit {
-					return nil
-				}
-				return fmt.Errorf("current available memory is: %d bytes. Expected at least %d bytes available.", avail, halflimit)
-			}, 5*time.Minute, 15*time.Second).Should(BeNil())
-
-			// Finally, try starting a new pod and wait for it to be scheduled and running.
-			// This is the final check to try to prevent interference with subsequent tests.
-			podName := "admitBestEffortPod"
-			f.PodClient().CreateSync(&api.Pod{
-				ObjectMeta: api.ObjectMeta{
-					Name: podName,
-				},
-				Spec: api.PodSpec{
-					RestartPolicy: api.RestartPolicyNever,
-					Containers: []api.Container{
-						{
-							Image: ImageRegistry[pauseImage],
-							Name:  podName,
-						},
-					},
-				},
-			})
 		})
 	})
 })

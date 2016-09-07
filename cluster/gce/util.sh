@@ -37,29 +37,10 @@ else
   exit 1
 fi
 
-function get_latest_gci_image() {
-  # GCI milestone to use
-  GCI_MILESTONE="53"
-
-  # First try to find an active (non-deprecated) image on this milestone.
-  gci_images=( $(gcloud compute images list --project google-containers \
-      --no-standard-images --sort-by="~creationTimestamp" \
-      --regexp="gci-[a-z]+-${GCI_MILESTONE}-.*" --format="table[no-heading](name)") )
-
-  # If no active image is available, search across all deprecated images.
-  if [[ ${#gci_images[@]} == 0 ]] ; then
-    gci_images=( $(gcloud compute images list --project google-containers \
-        --no-standard-images --show-deprecated --sort-by="~creationTimestamp" \
-        --regexp="gci-[a-z]+-${GCI_MILESTONE}-.*" --format="table[no-heading](name)") )
-  fi
-
-  echo "${gci_images[0]}"
-}
-
 if [[ "${MASTER_OS_DISTRIBUTION}" == "gci" ]]; then
   # If the master image is not set, we use the latest GCI image.
   # Otherwise, we respect whatever is set by the user.
-  MASTER_IMAGE=${KUBE_GCE_MASTER_IMAGE:-"$(get_latest_gci_image)"}
+  MASTER_IMAGE=${KUBE_GCE_MASTER_IMAGE:-${GCI_VERSION}}
   MASTER_IMAGE_PROJECT=${KUBE_GCE_MASTER_PROJECT:-google-containers}
 elif [[ "${MASTER_OS_DISTRIBUTION}" == "debian" ]]; then
   MASTER_IMAGE=${KUBE_GCE_MASTER_IMAGE:-${CVM_VERSION}}
@@ -69,7 +50,7 @@ fi
 if [[ "${NODE_OS_DISTRIBUTION}" == "gci" ]]; then
   # If the node image is not set, we use the latest GCI image.
   # Otherwise, we respect whatever is set by the user.
-  NODE_IMAGE=${KUBE_GCE_NODE_IMAGE:-"$(get_latest_gci_image)"}
+  NODE_IMAGE=${KUBE_GCE_NODE_IMAGE:-${GCI_VERSION}}
   NODE_IMAGE_PROJECT=${KUBE_GCE_NODE_PROJECT:-google-containers}
 elif [[ "${NODE_OS_DISTRIBUTION}" == "debian" ]]; then
   NODE_IMAGE=${KUBE_GCE_NODE_IMAGE:-${CVM_VERSION}}
@@ -386,15 +367,18 @@ function detect-nodes() {
 function detect-master() {
   detect-project
   KUBE_MASTER=${MASTER_NAME}
+  echo "Trying to find master named '${MASTER_NAME}'" >&2
   if [[ -z "${KUBE_MASTER_IP-}" ]]; then
-    KUBE_MASTER_IP=$(gcloud compute addresses describe "${MASTER_NAME}-ip" \
+    local master_address_name="${MASTER_NAME}-ip"
+    echo "Looking for address '${master_address_name}'" >&2
+    KUBE_MASTER_IP=$(gcloud compute addresses describe "${master_address_name}" \
       --project "${PROJECT}" --region "${REGION}" -q --format='value(address)')
   fi
   if [[ -z "${KUBE_MASTER_IP-}" ]]; then
     echo "Could not detect Kubernetes master node.  Make sure you've launched a cluster with 'kube-up.sh'" >&2
     exit 1
   fi
-  echo "Using master: $KUBE_MASTER (external IP: $KUBE_MASTER_IP)"
+  echo "Using master: $KUBE_MASTER (external IP: $KUBE_MASTER_IP)" >&2
 }
 
 # Reads kube-env metadata from master
@@ -610,7 +594,7 @@ function kube-up() {
   if [[ ${KUBE_USE_EXISTING_MASTER:-} == "true" ]]; then
     parse-master-env
     create-nodes
-  elif [[ ${KUBE_REPLICATE_EXISTING_MASTER:-} == "true" ]]; then
+  elif [[ ${KUBE_EXPERIMENTAL_REPLICATE_EXISTING_MASTER:-} == "true" ]]; then
     # TODO(jsz): implement adding replica for other distributions.
     if  [[ "${MASTER_OS_DISTRIBUTION}" != "gci" ]]; then
       echo "Master replication supported only for gci"
@@ -782,7 +766,7 @@ function replicate-master() {
   set-replica-name
   set-existing-master
 
-  echo "Replicating existing master ${EXISTING_MASTER_ZONE}/${EXISTING_MASTER_NAME} as ${ZONE}/${REPLICA_NAME}"
+  echo "Experimental: replicating existing master ${EXISTING_MASTER_ZONE}/${EXISTING_MASTER_NAME} as ${ZONE}/${REPLICA_NAME}"
 
   # Before we do anything else, we should configure etcd to expect more replicas.
   if ! add-replica-to-etcd 4001 2380; then

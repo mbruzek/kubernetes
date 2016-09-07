@@ -43,7 +43,7 @@ var sshOptionsMap map[string]string
 
 const (
 	archiveName  = "e2e_node_test.tar.gz"
-	CNIRelease   = "9d5e6e60e79491207834ae8439e80c943db65a69"
+	CNIRelease   = "07a8a28637e97b22eb8dfe710eeae1344f69d16e"
 	CNIDirectory = "cni"
 )
 
@@ -195,8 +195,8 @@ func RunRemote(archive string, host string, cleanup bool, junitFilePrefix string
 	// Run the tests
 	cmd = getSshCommand(" && ",
 		fmt.Sprintf("cd %s", tmp),
-		fmt.Sprintf("timeout -k 30s %fs ./ginkgo %s ./e2e_node.test -- --logtostderr --v 2 --stop-services=%t --node-name=%s --report-dir=%s/results --report-prefix=%s %s",
-			testTimeoutSeconds.Seconds(), ginkgoFlags, cleanup, host, tmp, junitFilePrefix, testArgs),
+		fmt.Sprintf("timeout -k 30s %fs ./ginkgo %s ./e2e_node.test -- --logtostderr --v 4 --node-name=%s --report-dir=%s/results --report-prefix=%s %s",
+			testTimeoutSeconds.Seconds(), ginkgoFlags, host, tmp, junitFilePrefix, testArgs),
 	)
 	aggErrs := []error{}
 
