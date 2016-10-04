@@ -49,20 +49,24 @@ func toRuntimeAPIImage(image *dockertypes.Image) (*runtimeApi.Image, error) {
 	}, nil
 }
 
-func toRuntimeAPIContainer(c *dockertypes.Container) *runtimeApi.Container {
+func toRuntimeAPIContainer(c *dockertypes.Container) (*runtimeApi.Container, error) {
 	state := toRuntimeAPIContainerState(c.Status)
-	_, _, _, containerName, attempt, _ := parseContainerName(c.Names[0])
-	return &runtimeApi.Container{
-		Id: &c.ID,
-		Metadata: &runtimeApi.ContainerMetadata{
-			Name:    &containerName,
-			Attempt: &attempt,
-		},
-		Image:    &runtimeApi.ImageSpec{Image: &c.Image},
-		ImageRef: &c.ImageID,
-		State:    &state,
-		Labels:   c.Labels,
+	metadata, err := parseContainerName(c.Names[0])
+	if err != nil {
+		return nil, err
 	}
+	labels, annotations := extractLabels(c.Labels)
+	sandboxID := c.Labels[sandboxIDLabelKey]
+	return &runtimeApi.Container{
+		Id:           &c.ID,
+		PodSandboxId: &sandboxID,
+		Metadata:     metadata,
+		Image:        &runtimeApi.ImageSpec{Image: &c.Image},
+		ImageRef:     &c.ImageID,
+		State:        &state,
+		Labels:       labels,
+		Annotations:  annotations,
+	}, nil
 }
 
 func toDockerContainerStatus(state runtimeApi.ContainerState) string {
@@ -106,19 +110,19 @@ func toRuntimeAPISandboxState(state string) runtimeApi.PodSandBoxState {
 	}
 }
 
-func toRuntimeAPISandbox(c *dockertypes.Container) *runtimeApi.PodSandbox {
+func toRuntimeAPISandbox(c *dockertypes.Container) (*runtimeApi.PodSandbox, error) {
 	state := toRuntimeAPISandboxState(c.Status)
-	podName, podNamespace, podUID, attempt, _ := parseSandboxName(c.Names[0])
-	return &runtimeApi.PodSandbox{
-		Id: &c.ID,
-		Metadata: &runtimeApi.PodSandboxMetadata{
-			Name:      &podName,
-			Namespace: &podNamespace,
-			Uid:       &podUID,
-			Attempt:   &attempt,
-		},
-		State:     &state,
-		CreatedAt: &c.Created, // TODO: Why do we need CreateAt timestamp for sandboxes?
-		Labels:    c.Labels,   // TODO: Need to disthinguish annotaions and labels.
+	metadata, err := parseSandboxName(c.Names[0])
+	if err != nil {
+		return nil, err
 	}
+	labels, annotations := extractLabels(c.Labels)
+	return &runtimeApi.PodSandbox{
+		Id:          &c.ID,
+		Metadata:    metadata,
+		State:       &state,
+		CreatedAt:   &c.Created,
+		Labels:      labels,
+		Annotations: annotations,
+	}, nil
 }

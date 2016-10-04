@@ -248,6 +248,45 @@ func TestValidateObjectMetaUpdateIgnoresCreationTimestamp(t *testing.T) {
 	}
 }
 
+func TestValidateFinalizersUpdate(t *testing.T) {
+	testcases := map[string]struct {
+		Old         api.ObjectMeta
+		New         api.ObjectMeta
+		ExpectedErr string
+	}{
+		"invalid adding finalizers": {
+			Old:         api.ObjectMeta{Name: "test", ResourceVersion: "1", DeletionTimestamp: &unversioned.Time{}, Finalizers: []string{"x/a"}},
+			New:         api.ObjectMeta{Name: "test", ResourceVersion: "1", DeletionTimestamp: &unversioned.Time{}, Finalizers: []string{"x/a", "y/b"}},
+			ExpectedErr: "y/b",
+		},
+		"invalid changing finalizers": {
+			Old:         api.ObjectMeta{Name: "test", ResourceVersion: "1", DeletionTimestamp: &unversioned.Time{}, Finalizers: []string{"x/a"}},
+			New:         api.ObjectMeta{Name: "test", ResourceVersion: "1", DeletionTimestamp: &unversioned.Time{}, Finalizers: []string{"x/b"}},
+			ExpectedErr: "x/b",
+		},
+		"valid removing finalizers": {
+			Old:         api.ObjectMeta{Name: "test", ResourceVersion: "1", DeletionTimestamp: &unversioned.Time{}, Finalizers: []string{"x/a", "y/b"}},
+			New:         api.ObjectMeta{Name: "test", ResourceVersion: "1", DeletionTimestamp: &unversioned.Time{}, Finalizers: []string{"x/a"}},
+			ExpectedErr: "",
+		},
+		"valid adding finalizers for objects not being deleted": {
+			Old:         api.ObjectMeta{Name: "test", ResourceVersion: "1", Finalizers: []string{"x/a"}},
+			New:         api.ObjectMeta{Name: "test", ResourceVersion: "1", Finalizers: []string{"x/a", "y/b"}},
+			ExpectedErr: "",
+		},
+	}
+	for name, tc := range testcases {
+		errs := ValidateObjectMetaUpdate(&tc.New, &tc.Old, field.NewPath("field"))
+		if len(errs) == 0 {
+			if len(tc.ExpectedErr) != 0 {
+				t.Errorf("case: %q, expected error to contain %q", name, tc.ExpectedErr)
+			}
+		} else if e, a := tc.ExpectedErr, errs.ToAggregate().Error(); !strings.Contains(a, e) {
+			t.Errorf("case: %q, expected error to contain %q, got error %q", name, e, a)
+		}
+	}
+}
+
 func TestValidateObjectMetaUpdatePreventsDeletionFieldMutation(t *testing.T) {
 	now := unversioned.NewTime(time.Unix(1000, 0).UTC())
 	later := unversioned.NewTime(time.Unix(2000, 0).UTC())
@@ -1481,7 +1520,18 @@ func TestValidateVolumes(t *testing.T) {
 		},
 		// Flocker
 		{
-			name: "valid Flocker",
+			name: "valid Flocker -- datasetUUID",
+			vol: api.Volume{
+				Name: "flocker",
+				VolumeSource: api.VolumeSource{
+					Flocker: &api.FlockerVolumeSource{
+						DatasetUUID: "d846b09d-223d-43df-ab5b-d6db2206a0e4",
+					},
+				},
+			},
+		},
+		{
+			name: "valid Flocker -- datasetName",
 			vol: api.Volume{
 				Name: "flocker",
 				VolumeSource: api.VolumeSource{
@@ -1492,7 +1542,7 @@ func TestValidateVolumes(t *testing.T) {
 			},
 		},
 		{
-			name: "empty flocker datasetName",
+			name: "both empty",
 			vol: api.Volume{
 				Name: "flocker",
 				VolumeSource: api.VolumeSource{
@@ -1502,7 +1552,21 @@ func TestValidateVolumes(t *testing.T) {
 				},
 			},
 			errtype:  field.ErrorTypeRequired,
-			errfield: "flocker.datasetName",
+			errfield: "flocker",
+		},
+		{
+			name: "both specified",
+			vol: api.Volume{
+				Name: "flocker",
+				VolumeSource: api.VolumeSource{
+					Flocker: &api.FlockerVolumeSource{
+						DatasetName: "datasetName",
+						DatasetUUID: "d846b09d-223d-43df-ab5b-d6db2206a0e4",
+					},
+				},
+			},
+			errtype:  field.ErrorTypeInvalid,
+			errfield: "flocker",
 		},
 		{
 			name: "slash in flocker datasetName",
@@ -5109,6 +5173,14 @@ func TestValidateService(t *testing.T) {
 			},
 			numErrs: 1,
 		},
+		{
+			name: "LoadBalancer type cannot have None ClusterIP",
+			tweakSvc: func(s *api.Service) {
+				s.Spec.ClusterIP = "None"
+				s.Spec.Type = api.ServiceTypeLoadBalancer
+			},
+			numErrs: 1,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -6348,6 +6420,33 @@ func TestValidateServiceUpdate(t *testing.T) {
 				newSvc.Spec.Type = api.ServiceTypeNodePort
 			},
 			numErrs: 0,
+		},
+		{
+			name: "add loadBalancerSourceRanges",
+			tweakSvc: func(oldSvc, newSvc *api.Service) {
+				oldSvc.Spec.Type = api.ServiceTypeLoadBalancer
+				newSvc.Spec.Type = api.ServiceTypeLoadBalancer
+				newSvc.Spec.LoadBalancerSourceRanges = []string{"10.0.0.0/8"}
+			},
+			numErrs: 1,
+		},
+		{
+			name: "update loadBalancerSourceRanges",
+			tweakSvc: func(oldSvc, newSvc *api.Service) {
+				oldSvc.Spec.Type = api.ServiceTypeLoadBalancer
+				oldSvc.Spec.LoadBalancerSourceRanges = []string{"10.0.0.0/8"}
+				newSvc.Spec.Type = api.ServiceTypeLoadBalancer
+				newSvc.Spec.LoadBalancerSourceRanges = []string{"10.180.0.0/16"}
+			},
+			numErrs: 1,
+		},
+		{
+			name: "LoadBalancer type cannot have None ClusterIP",
+			tweakSvc: func(oldSvc, newSvc *api.Service) {
+				newSvc.Spec.ClusterIP = "None"
+				newSvc.Spec.Type = api.ServiceTypeLoadBalancer
+			},
+			numErrs: 1,
 		},
 	}
 

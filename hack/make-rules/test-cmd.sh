@@ -304,14 +304,18 @@ runTests() {
   if [[ -z "${version}" ]]; then
     kube_flags=(
       -s "http://127.0.0.1:${API_PORT}"
-      --match-server-version
     )
+    if [[ -z "${ALLOW_SKEW:-}" ]]; then
+      kube_flags+=("--match-server-version")
+    fi
     [ "$(kubectl get nodes -o go-template='{{ .apiVersion }}' "${kube_flags[@]}")" == "v1" ]
   else
     kube_flags=(
       -s "http://127.0.0.1:${API_PORT}"
-      --match-server-version
     )
+    if [[ -z "${ALLOW_SKEW:-}" ]]; then
+      kube_flags+=("--match-server-version")
+    fi
     [ "$(kubectl get nodes -o go-template='{{ .apiVersion }}' "${kube_flags[@]}")" == "${version}" ]
   fi
   id_field=".metadata.name"
@@ -750,6 +754,15 @@ runTests() {
   kubectl replace "${kube_flags[@]}" --force -f /tmp/tmp-valid-pod.json
   # Post-condition: spec.container.name = "replaced-k8s-serve-hostname"
   kube::test::get_object_assert 'pod valid-pod' "{{(index .spec.containers 0).name}}" 'replaced-k8s-serve-hostname'
+
+  ## check replace --grace-period requires --force
+  output_message=$(! kubectl replace "${kube_flags[@]}" --grace-period=1 -f /tmp/tmp-valid-pod.json 2>&1)
+  kube::test::if_has_string "${output_message}" '\-\-grace-period must have \-\-force specified'
+
+  ## check replace --timeout requires --force
+  output_message=$(! kubectl replace "${kube_flags[@]}" --timeout=1s -f /tmp/tmp-valid-pod.json 2>&1)
+  kube::test::if_has_string "${output_message}" '\-\-timeout must have \-\-force specified'
+
   #cleaning
   rm /tmp/tmp-valid-pod.json
 
@@ -947,6 +960,9 @@ __EOF__
   kube::test::if_has_string "${output_message}" 'extensions/v1beta1'
   output_message=$(kubectl get hpa.autoscaling -o=jsonpath='{.items[0].apiVersion}' 2>&1 "${kube_flags[@]}")
   kube::test::if_has_string "${output_message}" 'autoscaling/v1'
+  # tests kubectl group prefix matching
+  output_message=$(kubectl get hpa.autoscal -o=jsonpath='{.items[0].apiVersion}' 2>&1 "${kube_flags[@]}")
+  kube::test::if_has_string "${output_message}" 'autoscaling/v1'
   # Clean up
   # Note that we should delete hpa first, otherwise it may fight with the rc reaper.
   kubectl delete hpa frontend "${kube_flags[@]}"
@@ -975,6 +991,21 @@ __EOF__
   [[ "$(kubectl get pods test-pod -o yaml "${kube_flags[@]}" | grep kubectl.kubernetes.io/last-applied-configuration)" ]]
   # Clean up
   kubectl delete pods test-pod "${kube_flags[@]}"
+
+
+  ## kubectl apply -f with label selector should only apply matching objects
+  # Pre-Condition: no POD exists
+  kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
+  # apply
+  kubectl apply -l unique-label=bingbang -f hack/testdata/filter "${kube_flags[@]}"
+  # check right pod exists
+  kube::test::get_object_assert 'pods selector-test-pod' "{{${labels_field}.name}}" 'selector-test-pod'
+  # check wrong pod doesn't exist
+  output_message=$(! kubectl get pods selector-test-pod-dont-apply 2>&1 "${kube_flags[@]}")
+  kube::test::if_has_string "${output_message}" 'pods "selector-test-pod-dont-apply" not found'
+  # cleanup
+  kubectl delete pods selector-test-pod
+
 
   ## kubectl run should create deployments or jobs
   # Pre-Condition: no Job exists
@@ -1035,6 +1066,19 @@ __EOF__
     echo "${LINENO} $(basename $0)"
     exit 1
   fi
+
+  ### Test kubectl get all
+  output_message=$(kubectl --v=6 --namespace default get all 2>&1 "${kube_flags[@]}")
+  # Post-condition: Check if we get 200 OK from all the url(s)
+  kube::test::if_has_string "${output_message}" "/api/v1/namespaces/default/pods 200 OK"
+  kube::test::if_has_string "${output_message}" "/api/v1/namespaces/default/replicationcontrollers 200 OK"
+  kube::test::if_has_string "${output_message}" "/api/v1/namespaces/default/services 200 OK"
+  kube::test::if_has_string "${output_message}" "/apis/apps/v1alpha1/namespaces/default/petsets 200 OK"
+  kube::test::if_has_string "${output_message}" "/apis/autoscaling/v1/namespaces/default/horizontalpodautoscalers 200"
+  kube::test::if_has_string "${output_message}" "/apis/batch/v1/namespaces/default/jobs 200 OK"
+  kube::test::if_has_string "${output_message}" "/apis/extensions/v1beta1/namespaces/default/deployments 200 OK"
+  kube::test::if_has_string "${output_message}" "/apis/extensions/v1beta1/namespaces/default/replicasets 200 OK"
+
 
   #####################################
   # Third Party Resources             #
@@ -1954,6 +1998,9 @@ __EOF__
   kube::test::get_object_assert deployment "{{range.items}}{{$deployment_image_field}}:{{end}}" "${IMAGE_DEPLOYMENT_R1}:"
   # Update the deployment (revision 2)
   kubectl apply -f hack/testdata/deployment-revision2.yaml "${kube_flags[@]}"
+  kube::test::get_object_assert deployment.extensions "{{range.items}}{{$deployment_image_field}}:{{end}}" "${IMAGE_DEPLOYMENT_R2}:"
+  # Rollback to revision 1 with dry-run - should be no-op
+  kubectl rollout undo deployment nginx --to-revision=1 --dry-run=true "${kube_flags[@]}"
   kube::test::get_object_assert deployment.extensions "{{range.items}}{{$deployment_image_field}}:{{end}}" "${IMAGE_DEPLOYMENT_R2}:"
   # Rollback to revision 1
   kubectl rollout undo deployment nginx --to-revision=1 "${kube_flags[@]}"

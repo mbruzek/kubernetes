@@ -186,18 +186,17 @@ var _ = framework.KubeDescribe("SchedulerPredicates [Serial]", func() {
 	var totalPodCapacity int64
 	var RCName string
 	var ns string
+	f := framework.NewDefaultFramework("sched-pred")
 	ignoreLabels := framework.ImagePullerLabels
 
 	AfterEach(func() {
 		rc, err := c.ReplicationControllers(ns).Get(RCName)
 		if err == nil && rc.Spec.Replicas != 0 {
 			By("Cleaning up the replication controller")
-			err := framework.DeleteRCAndPods(c, ns, RCName)
+			err := framework.DeleteRCAndPods(c, f.ClientSet, ns, RCName)
 			framework.ExpectNoError(err)
 		}
 	})
-
-	f := framework.NewDefaultFramework("sched-pred")
 
 	BeforeEach(func() {
 		c = f.Client
@@ -957,7 +956,7 @@ var _ = framework.KubeDescribe("SchedulerPredicates [Serial]", func() {
 		// cannot be scheduled onto it.
 		By("Launching two pods on two distinct nodes to get two node names")
 		CreateHostPortPods(f, "host-port", 2, true)
-		defer framework.DeleteRCAndPods(f.Client, f.Namespace.Name, "host-port")
+		defer framework.DeleteRCAndPods(f.Client, f.ClientSet, f.Namespace.Name, "host-port")
 		podList, err := c.Pods(ns).List(api.ListOptions{})
 		ExpectNoError(err)
 		Expect(len(podList.Items)).To(Equal(2))
@@ -1328,12 +1327,14 @@ var _ = framework.KubeDescribe("SchedulerPredicates [Serial]", func() {
 		framework.ExpectNoError(err)
 
 		By("Trying to apply a random taint on the found node.")
-		taintName := fmt.Sprintf("kubernetes.io/e2e-taint-key-%s", string(uuid.NewUUID()))
-		taintValue := "testing-taint-value"
-		taintEffect := api.TaintEffectNoSchedule
-		framework.AddOrUpdateTaintOnNode(c, nodeName, api.Taint{Key: taintName, Value: taintValue, Effect: taintEffect})
-		framework.ExpectNodeHasTaint(c, nodeName, taintName)
-		defer framework.RemoveTaintOffNode(c, nodeName, taintName)
+		testTaint := api.Taint{
+			Key:    fmt.Sprintf("kubernetes.io/e2e-taint-key-%s", string(uuid.NewUUID())),
+			Value:  "testing-taint-value",
+			Effect: api.TaintEffectNoSchedule,
+		}
+		framework.AddOrUpdateTaintOnNode(c, nodeName, testTaint)
+		framework.ExpectNodeHasTaint(c, nodeName, testTaint)
+		defer framework.RemoveTaintOffNode(c, nodeName, testTaint)
 
 		By("Trying to apply a random label on the found node.")
 		labelKey := fmt.Sprintf("kubernetes.io/e2e-label-key-%s", string(uuid.NewUUID()))
@@ -1354,9 +1355,9 @@ var _ = framework.KubeDescribe("SchedulerPredicates [Serial]", func() {
 					"scheduler.alpha.kubernetes.io/tolerations": `
 						[
 							{
-								"key": "` + taintName + `",
-								"value": "` + taintValue + `",
-								"effect": "` + string(taintEffect) + `"
+								"key": "` + testTaint.Key + `",
+								"value": "` + testTaint.Value + `",
+								"effect": "` + string(testTaint.Effect) + `"
 							}
 						]`,
 				},
@@ -1423,12 +1424,14 @@ var _ = framework.KubeDescribe("SchedulerPredicates [Serial]", func() {
 		framework.ExpectNoError(err)
 
 		By("Trying to apply a random taint on the found node.")
-		taintName := fmt.Sprintf("kubernetes.io/e2e-taint-key-%s", string(uuid.NewUUID()))
-		taintValue := "testing-taint-value"
-		taintEffect := api.TaintEffectNoSchedule
-		framework.AddOrUpdateTaintOnNode(c, nodeName, api.Taint{Key: taintName, Value: taintValue, Effect: taintEffect})
-		framework.ExpectNodeHasTaint(c, nodeName, taintName)
-		defer framework.RemoveTaintOffNode(c, nodeName, taintName)
+		testTaint := api.Taint{
+			Key:    fmt.Sprintf("kubernetes.io/e2e-taint-key-%s", string(uuid.NewUUID())),
+			Value:  "testing-taint-value",
+			Effect: api.TaintEffectNoSchedule,
+		}
+		framework.AddOrUpdateTaintOnNode(c, nodeName, testTaint)
+		framework.ExpectNodeHasTaint(c, nodeName, testTaint)
+		defer framework.RemoveTaintOffNode(c, nodeName, testTaint)
 
 		By("Trying to apply a random label on the found node.")
 		labelKey := fmt.Sprintf("kubernetes.io/e2e-label-key-%s", string(uuid.NewUUID()))
@@ -1466,7 +1469,7 @@ var _ = framework.KubeDescribe("SchedulerPredicates [Serial]", func() {
 		verifyResult(c, podNameNoTolerations, 0, 1, ns)
 
 		By("Removing taint off the node")
-		framework.RemoveTaintOffNode(c, nodeName, taintName)
+		framework.RemoveTaintOffNode(c, nodeName, testTaint)
 		// Wait a bit to allow scheduler to do its thing
 		// TODO: this is brittle; there's no guarantee the scheduler will have run in 10 seconds.
 		framework.Logf("Sleeping 10 seconds and crossing our fingers that scheduler will run in that time.")

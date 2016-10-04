@@ -398,6 +398,7 @@ func TestMasterService(t *testing.T) {
 		for i := range svcList.Items {
 			if svcList.Items[i].Name == "kubernetes" {
 				found = true
+				break
 			}
 		}
 		if found {
@@ -423,7 +424,7 @@ func TestServiceAlloc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bad cidr: %v", err)
 	}
-	cfg.ServiceClusterIPRange = cidr
+	cfg.GenericConfig.ServiceClusterIPRange = cidr
 	_, s := framework.RunAMaster(cfg)
 	defer s.Close()
 
@@ -465,7 +466,15 @@ func TestServiceAlloc(t *testing.T) {
 			t.Errorf("unexpected error text: %v", err)
 		}
 	} else {
-		t.Fatalf("unexpected sucess")
+		svcs, err := client.Services(api.NamespaceAll).List(api.ListOptions{})
+		if err != nil {
+			t.Fatalf("unexpected success, and error getting the services: %v", err)
+		}
+		allIPs := []string{}
+		for _, s := range svcs.Items {
+			allIPs = append(allIPs, s.Spec.ClusterIP)
+		}
+		t.Fatalf("unexpected creation success. The following IPs exist: %#v. It should only be possible to allocate 2 IP addresses in this cluster.\n\n%#v", allIPs, svcs)
 	}
 
 	// Delete the first service.

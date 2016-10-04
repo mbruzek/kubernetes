@@ -20,6 +20,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
+
+	"github.com/golang/glog"
 
 	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/api/validation/path"
@@ -37,26 +40,16 @@ func SimpleUpdate(fn SimpleUpdateFunc) UpdateFunc {
 	}
 }
 
-// SimpleFilter implements Filter interface.
-type SimpleFilter struct {
-	filterFunc  func(runtime.Object) bool
-	triggerFunc func() []MatchValue
-}
-
-func (s *SimpleFilter) Filter(obj runtime.Object) bool {
-	return s.filterFunc(obj)
-}
-
-func (s *SimpleFilter) Trigger() []MatchValue {
-	return s.triggerFunc()
-}
-
-func NewSimpleFilter(
-	filterFunc func(runtime.Object) bool,
-	triggerFunc func() []MatchValue) Filter {
-	return &SimpleFilter{
-		filterFunc:  filterFunc,
-		triggerFunc: triggerFunc,
+// SimpleFilter converts a selection predicate into a FilterFunc.
+// It ignores any error from Matches().
+func SimpleFilter(p SelectionPredicate) FilterFunc {
+	return func(obj runtime.Object) bool {
+		matches, err := p.Matches(obj)
+		if err != nil {
+			glog.Errorf("invalid object for matching. Obj: %v. Err: %v", obj, err)
+			return false
+		}
+		return matches
 	}
 }
 
@@ -148,4 +141,21 @@ func hasPathPrefix(s, pathPrefix string) bool {
 		return true
 	}
 	return false
+}
+
+// HighWaterMark is a thread-safe object for tracking the maximum value seen
+// for some quantity.
+type HighWaterMark int64
+
+// Update returns true if and only if 'current' is the highest value ever seen.
+func (hwm *HighWaterMark) Update(current int64) bool {
+	for {
+		old := atomic.LoadInt64((*int64)(hwm))
+		if current <= old {
+			return false
+		}
+		if atomic.CompareAndSwapInt64((*int64)(hwm), old, current) {
+			return true
+		}
+	}
 }

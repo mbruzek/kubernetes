@@ -335,13 +335,22 @@ func (s *ProxyServer) Run() error {
 }
 
 func getConntrackMax(config *options.ProxyServerConfig) (int, error) {
-	if config.ConntrackMax > 0 && config.ConntrackMaxPerCore > 0 {
-		return -1, fmt.Errorf("invalid config: ConntrackMax and ConntrackMaxPerCore are mutually exclusive")
-	}
 	if config.ConntrackMax > 0 {
+		if config.ConntrackMaxPerCore > 0 {
+			return -1, fmt.Errorf("invalid config: ConntrackMax and ConntrackMaxPerCore are mutually exclusive")
+		}
+		glog.V(3).Infof("getConntrackMax: using absolute conntrax-max (deprecated)")
 		return int(config.ConntrackMax), nil
-	} else if config.ConntrackMaxPerCore > 0 {
-		return (int(config.ConntrackMaxPerCore) * runtime.NumCPU()), nil
+	}
+	if config.ConntrackMaxPerCore > 0 {
+		floor := int(config.ConntrackMin)
+		scaled := int(config.ConntrackMaxPerCore) * runtime.NumCPU()
+		if scaled > floor {
+			glog.V(3).Infof("getConntrackMax: using scaled conntrax-max-per-core")
+			return scaled, nil
+		}
+		glog.V(3).Infof("getConntrackMax: using conntrax-min")
+		return floor, nil
 	}
 	return 0, nil
 }
@@ -391,7 +400,6 @@ func getProxyMode(proxyMode string, client nodeGetter, hostname string, iptver i
 }
 
 func tryIPTablesProxy(iptver iptables.IPTablesVersioner, kcompat iptables.KernelCompatTester) string {
-	var err error
 	// guaranteed false on error, error only necessary for debugging
 	useIPTablesProxy, err := iptables.CanUseIPTablesProxier(iptver, kcompat)
 	if err != nil {
@@ -402,7 +410,7 @@ func tryIPTablesProxy(iptver iptables.IPTablesVersioner, kcompat iptables.Kernel
 		return proxyModeIPTables
 	}
 	// Fallback.
-	glog.V(1).Infof("Can't use iptables proxy, using userspace proxier: %v", err)
+	glog.V(1).Infof("Can't use iptables proxy, using userspace proxier")
 	return proxyModeUserspace
 }
 

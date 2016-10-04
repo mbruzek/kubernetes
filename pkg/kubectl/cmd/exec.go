@@ -22,12 +22,12 @@ import (
 	"net/url"
 
 	dockerterm "github.com/docker/docker/pkg/term"
-	"github.com/golang/glog"
 	"github.com/renstrom/dedent"
 	"github.com/spf13/cobra"
+
 	"k8s.io/kubernetes/pkg/api"
+	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/unversioned"
 	"k8s.io/kubernetes/pkg/client/restclient"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/client/unversioned/remotecommand"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	remotecommandserver "k8s.io/kubernetes/pkg/kubelet/server/remotecommand"
@@ -130,9 +130,12 @@ type ExecOptions struct {
 
 	Command []string
 
-	Executor RemoteExecutor
-	Client   *client.Client
-	Config   *restclient.Config
+	FullCmdName       string
+	SuggestedCmdUsage string
+
+	Executor  RemoteExecutor
+	PodClient coreclient.PodsGetter
+	Config    *restclient.Config
 }
 
 // Complete verifies command line arguments and loads data from the command environment
@@ -155,6 +158,14 @@ func (p *ExecOptions) Complete(f *cmdutil.Factory, cmd *cobra.Command, argsIn []
 		}
 	}
 
+	cmdParent := cmd.Parent()
+	if cmdParent != nil {
+		p.FullCmdName = cmdParent.CommandPath()
+	}
+	if len(p.FullCmdName) > 0 && cmdutil.IsSiblingCommandExists(cmd, "describe") {
+		p.SuggestedCmdUsage = fmt.Sprintf("Use '%s describe pod/%s' to see all of the containers in this pod.", p.FullCmdName, p.PodName)
+	}
+
 	namespace, _, err := f.DefaultNamespace()
 	if err != nil {
 		return err
@@ -167,11 +178,11 @@ func (p *ExecOptions) Complete(f *cmdutil.Factory, cmd *cobra.Command, argsIn []
 	}
 	p.Config = config
 
-	client, err := f.Client()
+	clientset, err := f.ClientSet()
 	if err != nil {
 		return err
 	}
-	p.Client = client
+	p.PodClient = clientset.Core()
 
 	return nil
 }
@@ -187,7 +198,7 @@ func (p *ExecOptions) Validate() error {
 	if p.Out == nil || p.Err == nil {
 		return fmt.Errorf("both output and error output must be provided")
 	}
-	if p.Executor == nil || p.Client == nil || p.Config == nil {
+	if p.Executor == nil || p.PodClient == nil || p.Config == nil {
 		return fmt.Errorf("client, client config, and executor must be provided")
 	}
 	return nil
@@ -247,7 +258,7 @@ func (o *StreamOptions) setupTTY() term.TTY {
 
 // Run executes a validated remote execution against a pod.
 func (p *ExecOptions) Run() error {
-	pod, err := p.Client.Pods(p.Namespace).Get(p.PodName)
+	pod, err := p.PodClient.Pods(p.Namespace).Get(p.PodName)
 	if err != nil {
 		return err
 	}
@@ -258,7 +269,13 @@ func (p *ExecOptions) Run() error {
 
 	containerName := p.ContainerName
 	if len(containerName) == 0 {
-		glog.V(4).Infof("defaulting container name to %s", pod.Spec.Containers[0].Name)
+		if len(pod.Spec.Containers) > 1 {
+			usageString := fmt.Sprintf("Defaulting container name to %s.", pod.Spec.Containers[0].Name)
+			if len(p.SuggestedCmdUsage) > 0 {
+				usageString = fmt.Sprintf("%s\n%s", usageString, p.SuggestedCmdUsage)
+			}
+			fmt.Fprintf(p.Err, "%s\n", usageString)
+		}
 		containerName = pod.Spec.Containers[0].Name
 	}
 
@@ -276,8 +293,13 @@ func (p *ExecOptions) Run() error {
 	}
 
 	fn := func() error {
+		restClient, err := restclient.RESTClientFor(p.Config)
+		if err != nil {
+			return err
+		}
+
 		// TODO: consider abstracting into a client invocation or client helper
-		req := p.Client.RESTClient.Post().
+		req := restClient.Post().
 			Resource("pods").
 			Name(pod.Name).
 			Namespace(pod.Namespace).

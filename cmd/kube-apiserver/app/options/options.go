@@ -24,7 +24,6 @@ import (
 	genericoptions "k8s.io/kubernetes/pkg/genericapiserver/options"
 	kubeletclient "k8s.io/kubernetes/pkg/kubelet/client"
 	"k8s.io/kubernetes/pkg/master/ports"
-	"k8s.io/kubernetes/pkg/registry/generic/registry"
 
 	"github.com/spf13/pflag"
 )
@@ -72,7 +71,7 @@ func (s *APIServer) AddFlags(fs *pflag.FlagSet) {
 		"Amount of time to retain events. Default is 1h.")
 
 	fs.StringVar(&s.ServiceAccountKeyFile, "service-account-key-file", s.ServiceAccountKeyFile, ""+
-		"File containing PEM-encoded x509 RSA private or public key, used to verify "+
+		"File containing PEM-encoded x509 RSA or ECDSA private or public key, used to verify "+
 		"ServiceAccount tokens. If unspecified, --tls-private-key-file is used.")
 
 	fs.BoolVar(&s.ServiceAccountLookup, "service-account-lookup", s.ServiceAccountLookup,
@@ -123,8 +122,4 @@ func (s *APIServer) AddFlags(fs *pflag.FlagSet) {
 		"If true, server will do its best to fix the update request to pass the validation, "+
 		"e.g., setting empty UID in update request to its existing value. This flag can be turned off "+
 		"after we fix all the clients that send malformed updates.")
-
-	fs.BoolVar(&registry.EnableGarbageCollector, "enable-garbage-collector", true, ""+
-		"Enables the generic garbage collector. MUST be synced with the corresponding flag "+
-		"of the kube-controller-manager.")
 }
