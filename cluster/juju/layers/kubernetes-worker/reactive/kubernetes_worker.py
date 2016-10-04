@@ -234,11 +234,8 @@ def ceph_storage(ceph_admin):
     if not os.path.isdir(etc_ceph_directory):
         os.makedirs(etc_ceph_directory)
     charm_ceph_conf = os.path.join(etc_ceph_directory, 'ceph.conf')
-    try:
-        with open(charm_ceph_conf, 'w') as ceph_conf:
-            ceph_conf.write(render('ceph.conf', ceph_context))
-    except IOError as err:
-        hookenv.log("IOError writing ceph.conf: {}".format(err))
+    # Render the ceph configuration from the ceph conf template
+    render('ceph.conf', charm_ceph_conf, ceph_context)
 
     admin_key = os.path.join(etc_ceph_directory, 'ceph.client.admin.keyring')
     try:
