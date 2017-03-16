@@ -21,27 +21,27 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/types"
 )
 
-func parseTimeOrDie(ts string) unversioned.Time {
+func parseTimeOrDie(ts string) metav1.Time {
 	t, err := time.Parse(time.RFC3339, ts)
 	if err != nil {
 		panic(err)
 	}
-	return unversioned.Time{Time: t}
+	return metav1.Time{Time: t}
 }
 
 var benchmarkPod api.Pod = api.Pod{
-	TypeMeta: unversioned.TypeMeta{
+	TypeMeta: metav1.TypeMeta{
 		Kind:       "Pod",
 		APIVersion: "v1",
 	},
-	ObjectMeta: api.ObjectMeta{
+	ObjectMeta: metav1.ObjectMeta{
 		Name:              "etcd-server-e2e-test-wojtekt-master",
 		Namespace:         "default",
 		SelfLink:          "/api/v1/namespaces/default/pods/etcd-server-e2e-test-wojtekt-master",

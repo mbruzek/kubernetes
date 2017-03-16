@@ -18,11 +18,17 @@ package serviceaccount
 
 import (
 	"testing"
+	"time"
 
-	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
-	"k8s.io/kubernetes/pkg/client/testing/core"
-	"k8s.io/kubernetes/pkg/util/sets"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	core "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset/fake"
+	"k8s.io/kubernetes/pkg/client/legacylisters"
+	"k8s.io/kubernetes/pkg/controller"
+	"k8s.io/kubernetes/pkg/controller/informers"
 )
 
 type serverResponse struct {
@@ -31,39 +37,39 @@ type serverResponse struct {
 }
 
 func TestServiceAccountCreation(t *testing.T) {
-	ns := api.NamespaceDefault
+	ns := metav1.NamespaceDefault
 
 	defaultName := "default"
 	managedName := "managed"
 
-	activeNS := &api.Namespace{
-		ObjectMeta: api.ObjectMeta{Name: ns},
-		Status: api.NamespaceStatus{
-			Phase: api.NamespaceActive,
+	activeNS := &v1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: ns},
+		Status: v1.NamespaceStatus{
+			Phase: v1.NamespaceActive,
 		},
 	}
-	terminatingNS := &api.Namespace{
-		ObjectMeta: api.ObjectMeta{Name: ns},
-		Status: api.NamespaceStatus{
-			Phase: api.NamespaceTerminating,
+	terminatingNS := &v1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: ns},
+		Status: v1.NamespaceStatus{
+			Phase: v1.NamespaceTerminating,
 		},
 	}
-	defaultServiceAccount := &api.ServiceAccount{
-		ObjectMeta: api.ObjectMeta{
+	defaultServiceAccount := &v1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:            defaultName,
 			Namespace:       ns,
 			ResourceVersion: "1",
 		},
 	}
-	managedServiceAccount := &api.ServiceAccount{
-		ObjectMeta: api.ObjectMeta{
+	managedServiceAccount := &v1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:            managedName,
 			Namespace:       ns,
 			ResourceVersion: "1",
 		},
 	}
-	unmanagedServiceAccount := &api.ServiceAccount{
-		ObjectMeta: api.ObjectMeta{
+	unmanagedServiceAccount := &v1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:            "other-unmanaged",
 			Namespace:       ns,
 			ResourceVersion: "1",
@@ -71,54 +77,54 @@ func TestServiceAccountCreation(t *testing.T) {
 	}
 
 	testcases := map[string]struct {
-		ExistingNamespace       *api.Namespace
-		ExistingServiceAccounts []*api.ServiceAccount
+		ExistingNamespace       *v1.Namespace
+		ExistingServiceAccounts []*v1.ServiceAccount
 
-		AddedNamespace        *api.Namespace
-		UpdatedNamespace      *api.Namespace
-		DeletedServiceAccount *api.ServiceAccount
+		AddedNamespace        *v1.Namespace
+		UpdatedNamespace      *v1.Namespace
+		DeletedServiceAccount *v1.ServiceAccount
 
 		ExpectCreatedServiceAccounts []string
 	}{
 		"new active namespace missing serviceaccounts": {
-			ExistingServiceAccounts:      []*api.ServiceAccount{},
+			ExistingServiceAccounts:      []*v1.ServiceAccount{},
 			AddedNamespace:               activeNS,
 			ExpectCreatedServiceAccounts: sets.NewString(defaultName, managedName).List(),
 		},
 		"new active namespace missing serviceaccount": {
-			ExistingServiceAccounts:      []*api.ServiceAccount{managedServiceAccount},
+			ExistingServiceAccounts:      []*v1.ServiceAccount{managedServiceAccount},
 			AddedNamespace:               activeNS,
 			ExpectCreatedServiceAccounts: []string{defaultName},
 		},
 		"new active namespace with serviceaccounts": {
-			ExistingServiceAccounts:      []*api.ServiceAccount{defaultServiceAccount, managedServiceAccount},
+			ExistingServiceAccounts:      []*v1.ServiceAccount{defaultServiceAccount, managedServiceAccount},
 			AddedNamespace:               activeNS,
 			ExpectCreatedServiceAccounts: []string{},
 		},
 
 		"new terminating namespace": {
-			ExistingServiceAccounts:      []*api.ServiceAccount{},
+			ExistingServiceAccounts:      []*v1.ServiceAccount{},
 			AddedNamespace:               terminatingNS,
 			ExpectCreatedServiceAccounts: []string{},
 		},
 
 		"updated active namespace missing serviceaccounts": {
-			ExistingServiceAccounts:      []*api.ServiceAccount{},
+			ExistingServiceAccounts:      []*v1.ServiceAccount{},
 			UpdatedNamespace:             activeNS,
 			ExpectCreatedServiceAccounts: sets.NewString(defaultName, managedName).List(),
 		},
 		"updated active namespace missing serviceaccount": {
-			ExistingServiceAccounts:      []*api.ServiceAccount{defaultServiceAccount},
+			ExistingServiceAccounts:      []*v1.ServiceAccount{defaultServiceAccount},
 			UpdatedNamespace:             activeNS,
 			ExpectCreatedServiceAccounts: []string{managedName},
 		},
 		"updated active namespace with serviceaccounts": {
-			ExistingServiceAccounts:      []*api.ServiceAccount{defaultServiceAccount, managedServiceAccount},
+			ExistingServiceAccounts:      []*v1.ServiceAccount{defaultServiceAccount, managedServiceAccount},
 			UpdatedNamespace:             activeNS,
 			ExpectCreatedServiceAccounts: []string{},
 		},
 		"updated terminating namespace": {
-			ExistingServiceAccounts:      []*api.ServiceAccount{},
+			ExistingServiceAccounts:      []*v1.ServiceAccount{},
 			UpdatedNamespace:             terminatingNS,
 			ExpectCreatedServiceAccounts: []string{},
 		},
@@ -128,6 +134,7 @@ func TestServiceAccountCreation(t *testing.T) {
 			ExpectCreatedServiceAccounts: []string{},
 		},
 		"deleted serviceaccount with active namespace": {
+			ExistingServiceAccounts:      []*v1.ServiceAccount{managedServiceAccount},
 			ExistingNamespace:            activeNS,
 			DeletedServiceAccount:        defaultServiceAccount,
 			ExpectCreatedServiceAccounts: []string{defaultName},
@@ -138,6 +145,7 @@ func TestServiceAccountCreation(t *testing.T) {
 			ExpectCreatedServiceAccounts: []string{},
 		},
 		"deleted unmanaged serviceaccount with active namespace": {
+			ExistingServiceAccounts:      []*v1.ServiceAccount{defaultServiceAccount, managedServiceAccount},
 			ExistingNamespace:            activeNS,
 			DeletedServiceAccount:        unmanagedServiceAccount,
 			ExpectCreatedServiceAccounts: []string{},
@@ -151,30 +159,56 @@ func TestServiceAccountCreation(t *testing.T) {
 
 	for k, tc := range testcases {
 		client := fake.NewSimpleClientset(defaultServiceAccount, managedServiceAccount)
+		informers := informers.NewSharedInformerFactory(fake.NewSimpleClientset(), nil, controller.NoResyncPeriodFunc())
 		options := DefaultServiceAccountsControllerOptions()
-		options.ServiceAccounts = []api.ServiceAccount{
-			{ObjectMeta: api.ObjectMeta{Name: defaultName}},
-			{ObjectMeta: api.ObjectMeta{Name: managedName}},
+		options.ServiceAccounts = []v1.ServiceAccount{
+			{ObjectMeta: metav1.ObjectMeta{Name: defaultName}},
+			{ObjectMeta: metav1.ObjectMeta{Name: managedName}},
 		}
-		controller := NewServiceAccountsController(client, options)
+		controller := NewServiceAccountsController(informers.ServiceAccounts(), informers.Namespaces(), client, options)
+		controller.saLister = &listers.StoreToServiceAccountLister{Indexer: cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})}
+		controller.nsLister = &listers.IndexerToNamespaceLister{Indexer: cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})}
+		controller.saSynced = alwaysReady
+		controller.nsSynced = alwaysReady
+
+		syncCalls := make(chan struct{})
+		controller.syncHandler = func(key string) error {
+			err := controller.syncNamespace(key)
+			if err != nil {
+				t.Logf("%s: %v", k, err)
+			}
+
+			syncCalls <- struct{}{}
+			return err
+		}
+		stopCh := make(chan struct{})
+		defer close(stopCh)
+		go controller.Run(1, stopCh)
 
 		if tc.ExistingNamespace != nil {
-			controller.namespaces.Add(tc.ExistingNamespace)
+			controller.nsLister.Add(tc.ExistingNamespace)
 		}
 		for _, s := range tc.ExistingServiceAccounts {
-			controller.serviceAccounts.Add(s)
+			controller.saLister.Indexer.Add(s)
 		}
 
 		if tc.AddedNamespace != nil {
-			controller.namespaces.Add(tc.AddedNamespace)
+			controller.nsLister.Add(tc.AddedNamespace)
 			controller.namespaceAdded(tc.AddedNamespace)
 		}
 		if tc.UpdatedNamespace != nil {
-			controller.namespaces.Add(tc.UpdatedNamespace)
+			controller.nsLister.Add(tc.UpdatedNamespace)
 			controller.namespaceUpdated(nil, tc.UpdatedNamespace)
 		}
 		if tc.DeletedServiceAccount != nil {
 			controller.serviceAccountDeleted(tc.DeletedServiceAccount)
+		}
+
+		// wait to be called
+		select {
+		case <-syncCalls:
+		case <-time.After(10 * time.Second):
+			t.Errorf("%s: took too long", k)
 		}
 
 		actions := client.Actions()
@@ -188,10 +222,12 @@ func TestServiceAccountCreation(t *testing.T) {
 				t.Errorf("%s: Unexpected action %s", k, action)
 				break
 			}
-			createdAccount := action.(core.CreateAction).GetObject().(*api.ServiceAccount)
+			createdAccount := action.(core.CreateAction).GetObject().(*v1.ServiceAccount)
 			if createdAccount.Name != expectedName {
 				t.Errorf("%s: Expected %s to be created, got %s", k, expectedName, createdAccount.Name)
 			}
 		}
 	}
 }
+
+var alwaysReady = func() bool { return true }

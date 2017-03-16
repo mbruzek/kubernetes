@@ -26,10 +26,11 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/kubernetes/pkg/api"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
@@ -98,7 +99,7 @@ func getIterations(bN int) int {
 }
 
 // startPodsOnNodes creates numPods sharded across numNodes
-func startPodsOnNodes(ns string, numPods, numNodes int, restClient *client.Client) {
+func startPodsOnNodes(ns string, numPods, numNodes int, restClient clientset.Interface) {
 	podsPerNode := numPods / numNodes
 	if podsPerNode < 1 {
 		podsPerNode = 1
@@ -137,7 +138,7 @@ func BenchmarkPodList(b *testing.B) {
 			defer func() {
 				glog.V(3).Infof("Worker %d: Node %v listing pods took %v", id, host, time.Since(now))
 			}()
-			if pods, err := m.RestClient.Pods(ns.Name).List(api.ListOptions{
+			if pods, err := m.ClientSet.Core().Pods(ns.Name).List(metav1.ListOptions{
 				LabelSelector: labels.Everything(),
 				FieldSelector: fields.OneTermEqualSelector(api.PodHostField, host),
 			}); err != nil {
@@ -180,7 +181,7 @@ func BenchmarkPodListEtcd(b *testing.B) {
 			defer func() {
 				glog.V(3).Infof("Worker %d: listing pods took %v", id, time.Since(now))
 			}()
-			pods, err := m.RestClient.Pods(ns.Name).List(api.ListOptions{
+			pods, err := m.ClientSet.Core().Pods(ns.Name).List(metav1.ListOptions{
 				LabelSelector: labels.Everything(),
 				FieldSelector: fields.Everything(),
 			})

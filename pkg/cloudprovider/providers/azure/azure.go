@@ -24,8 +24,10 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/arm/compute"
 	"github.com/Azure/azure-sdk-for-go/arm/network"
+	"github.com/Azure/azure-sdk-for-go/arm/storage"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/ghodss/yaml"
+	"time"
 )
 
 // CloudProviderName is the value used for the --cloud-provider flag
@@ -33,15 +35,16 @@ const CloudProviderName = "azure"
 
 // Config holds the configuration parsed from the --cloud-config flag
 type Config struct {
-	Cloud             string `json:"cloud" yaml:"cloud"`
-	TenantID          string `json:"tenantId" yaml:"tenantId"`
-	SubscriptionID    string `json:"subscriptionId" yaml:"subscriptionId"`
-	ResourceGroup     string `json:"resourceGroup" yaml:"resourceGroup"`
-	Location          string `json:"location" yaml:"location"`
-	VnetName          string `json:"vnetName" yaml:"vnetName"`
-	SubnetName        string `json:"subnetName" yaml:"subnetName"`
-	SecurityGroupName string `json:"securityGroupName" yaml:"securityGroupName"`
-	RouteTableName    string `json:"routeTableName" yaml:"routeTableName"`
+	Cloud                      string `json:"cloud" yaml:"cloud"`
+	TenantID                   string `json:"tenantId" yaml:"tenantId"`
+	SubscriptionID             string `json:"subscriptionId" yaml:"subscriptionId"`
+	ResourceGroup              string `json:"resourceGroup" yaml:"resourceGroup"`
+	Location                   string `json:"location" yaml:"location"`
+	VnetName                   string `json:"vnetName" yaml:"vnetName"`
+	SubnetName                 string `json:"subnetName" yaml:"subnetName"`
+	SecurityGroupName          string `json:"securityGroupName" yaml:"securityGroupName"`
+	RouteTableName             string `json:"routeTableName" yaml:"routeTableName"`
+	PrimaryAvailabilitySetName string `json:"primaryAvailabilitySetName" yaml:"primaryAvailabilitySetName"`
 
 	AADClientID     string `json:"aadClientId" yaml:"aadClientId"`
 	AADClientSecret string `json:"aadClientSecret" yaml:"aadClientSecret"`
@@ -60,6 +63,7 @@ type Cloud struct {
 	PublicIPAddressesClient network.PublicIPAddressesClient
 	SecurityGroupsClient    network.SecurityGroupsClient
 	VirtualMachinesClient   compute.VirtualMachinesClient
+	StorageAccountClient    storage.AccountsClient
 }
 
 func init() {
@@ -125,6 +129,7 @@ func NewCloud(configReader io.Reader) (cloudprovider.Interface, error) {
 	az.VirtualMachinesClient = compute.NewVirtualMachinesClient(az.SubscriptionID)
 	az.VirtualMachinesClient.BaseURI = az.Environment.ResourceManagerEndpoint
 	az.VirtualMachinesClient.Authorizer = servicePrincipalToken
+	az.VirtualMachinesClient.PollingDelay = 5 * time.Second
 
 	az.PublicIPAddressesClient = network.NewPublicIPAddressesClient(az.SubscriptionID)
 	az.PublicIPAddressesClient.BaseURI = az.Environment.ResourceManagerEndpoint
@@ -134,6 +139,8 @@ func NewCloud(configReader io.Reader) (cloudprovider.Interface, error) {
 	az.SecurityGroupsClient.BaseURI = az.Environment.ResourceManagerEndpoint
 	az.SecurityGroupsClient.Authorizer = servicePrincipalToken
 
+	az.StorageAccountClient = storage.NewAccountsClientWithBaseURI(az.Environment.ResourceManagerEndpoint, az.SubscriptionID)
+	az.StorageAccountClient.Authorizer = servicePrincipalToken
 	return &az, nil
 }
 

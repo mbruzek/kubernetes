@@ -34,7 +34,6 @@ retry() {
 export PATH=${GOPATH}/bin:${PWD}/third_party/etcd:/usr/local/go/bin:${PATH}
 
 retry go get github.com/tools/godep && godep version
-retry go get github.com/jteeuwen/go-bindata/go-bindata
 retry go get github.com/jstemmer/go-junit-report
 
 # Enable the Go race detector.
@@ -51,13 +50,13 @@ export KUBE_INTEGRATION_TEST_MAX_CONCURRENCY=4
 export LOG_LEVEL=4
 
 cd /go/src/k8s.io/kubernetes
-rm -rf Godeps/_workspace # Temporary until _workspace is fully obliterated
 
 make generated_files
 go install ./cmd/...
 ./hack/install-etcd.sh
 
-make test
+# bazel didn't like BUILD files in the staging repos, so we need to run unit tests
+make test WHAT="./vendor/k8s.io/apimachinery/... ./vendor/k8s.io/apiserver/... ./vendor/k8s.io/client-go/..."
 make test-cmd
 make test-integration
 ./hack/test-update-storage-objects.sh

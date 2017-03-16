@@ -24,26 +24,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/ghodss/yaml"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/rest/fake"
+	restclientwatch "k8s.io/client-go/rest/watch"
+	utiltesting "k8s.io/client-go/util/testing"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/api/resource"
 	"k8s.io/kubernetes/pkg/api/testapi"
 	apitesting "k8s.io/kubernetes/pkg/api/testing"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/client/unversioned/fake"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/runtime/serializer/streaming"
-	utilerrors "k8s.io/kubernetes/pkg/util/errors"
-	utiltesting "k8s.io/kubernetes/pkg/util/testing"
-	"k8s.io/kubernetes/pkg/watch"
-	"k8s.io/kubernetes/pkg/watch/versioned"
 )
 
 func stringBody(body string) io.ReadCloser {
@@ -53,7 +54,7 @@ func stringBody(body string) io.ReadCloser {
 func watchBody(events ...watch.Event) string {
 	buf := &bytes.Buffer{}
 	codec := testapi.Default.Codec()
-	enc := versioned.NewEncoder(streaming.NewEncoder(buf, codec), codec)
+	enc := restclientwatch.NewEncoder(streaming.NewEncoder(buf, codec), codec)
 	for _, e := range events {
 		enc.Encode(&e)
 	}
@@ -69,6 +70,7 @@ func fakeClient() ClientMapper {
 func fakeClientWith(testName string, t *testing.T, data map[string]string) ClientMapper {
 	return ClientMapperFunc(func(*meta.RESTMapping) (RESTClient, error) {
 		return &fake.RESTClient{
+			APIRegistry:          api.Registry,
 			NegotiatedSerializer: testapi.Default.NegotiatedSerializer(),
 			Client: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
 				p := req.URL.Path
@@ -94,27 +96,27 @@ func fakeClientWith(testName string, t *testing.T, data map[string]string) Clien
 
 func testData() (*api.PodList, *api.ServiceList) {
 	pods := &api.PodList{
-		ListMeta: unversioned.ListMeta{
+		ListMeta: metav1.ListMeta{
 			ResourceVersion: "15",
 		},
 		Items: []api.Pod{
 			{
-				ObjectMeta: api.ObjectMeta{Name: "foo", Namespace: "test", ResourceVersion: "10"},
+				ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "test", ResourceVersion: "10"},
 				Spec:       apitesting.DeepEqualSafePodSpec(),
 			},
 			{
-				ObjectMeta: api.ObjectMeta{Name: "bar", Namespace: "test", ResourceVersion: "11"},
+				ObjectMeta: metav1.ObjectMeta{Name: "bar", Namespace: "test", ResourceVersion: "11"},
 				Spec:       apitesting.DeepEqualSafePodSpec(),
 			},
 		},
 	}
 	svc := &api.ServiceList{
-		ListMeta: unversioned.ListMeta{
+		ListMeta: metav1.ListMeta{
 			ResourceVersion: "16",
 		},
 		Items: []api.Service{
 			{
-				ObjectMeta: api.ObjectMeta{Name: "baz", Namespace: "test", ResourceVersion: "12"},
+				ObjectMeta: metav1.ObjectMeta{Name: "baz", Namespace: "test", ResourceVersion: "12"},
 				Spec: api.ServiceSpec{
 					Type:            "ClusterIP",
 					SessionAffinity: "None",
@@ -189,7 +191,7 @@ func (v *testVisitor) Objects() []runtime.Object {
 var aPod string = `
 {
     "kind": "Pod",
-		"apiVersion": "` + testapi.Default.GroupVersion().String() + `",
+		"apiVersion": "` + api.Registry.GroupOrDie(api.GroupName).GroupVersion.String() + `",
     "metadata": {
         "name": "busybox{id}",
         "labels": {
@@ -216,7 +218,7 @@ var aPod string = `
 var aRC string = `
 {
     "kind": "ReplicationController",
-		"apiVersion": "` + testapi.Default.GroupVersion().String() + `",
+		"apiVersion": "` + api.Registry.GroupOrDie(api.GroupName).GroupVersion.String() + `",
     "metadata": {
         "name": "busybox{id}",
         "labels": {
@@ -256,11 +258,11 @@ func TestPathBuilderAndVersionedObjectNotDefaulted(t *testing.T) {
 		FilenameParam(false, &FilenameOptions{Recursive: false, Filenames: []string{"../../../test/fixtures/pkg/kubectl/builder/kitten-rc.yaml"}})
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || !singular || len(test.Infos) != 1 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || !singleItemImplied || len(test.Infos) != 1 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 
 	info := test.Infos[0]
@@ -276,7 +278,7 @@ func TestPathBuilderAndVersionedObjectNotDefaulted(t *testing.T) {
 
 func TestNodeBuilder(t *testing.T) {
 	node := &api.Node{
-		ObjectMeta: api.ObjectMeta{Name: "node1", Namespace: "should-not-have", ResourceVersion: "10"},
+		ObjectMeta: metav1.ObjectMeta{Name: "node1", Namespace: "should-not-have", ResourceVersion: "10"},
 		Spec:       api.NodeSpec{},
 		Status: api.NodeStatus{
 			Capacity: api.ResourceList{
@@ -360,11 +362,11 @@ func TestPathBuilderWithMultiple(t *testing.T) {
 			NamespaceParam("test").DefaultNamespace()
 
 		testVisitor := &testVisitor{}
-		singular := false
+		singleItemImplied := false
 
-		err := b.Do().IntoSingular(&singular).Visit(testVisitor.Handle)
+		err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(testVisitor.Handle)
 		if err != nil {
-			t.Fatalf("unexpected response: %v %t %#v %s", err, singular, testVisitor.Infos, test.name)
+			t.Fatalf("unexpected response: %v %t %#v %s", err, singleItemImplied, testVisitor.Infos, test.name)
 		}
 
 		info := testVisitor.Infos
@@ -419,11 +421,11 @@ func TestPathBuilderWithMultipleInvalid(t *testing.T) {
 			NamespaceParam("test").DefaultNamespace()
 
 		testVisitor := &testVisitor{}
-		singular := false
+		singleItemImplied := false
 
-		err := b.Do().IntoSingular(&singular).Visit(testVisitor.Handle)
+		err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(testVisitor.Handle)
 		if err == nil {
-			t.Fatalf("unexpected response: %v %t %#v %s", err, singular, testVisitor.Infos, test.name)
+			t.Fatalf("unexpected response: %v %t %#v %s", err, singleItemImplied, testVisitor.Infos, test.name)
 		}
 	}
 }
@@ -434,11 +436,11 @@ func TestDirectoryBuilder(t *testing.T) {
 		NamespaceParam("test").DefaultNamespace()
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || singular || len(test.Infos) < 3 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || singleItemImplied || len(test.Infos) < 3 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 
 	found := false
@@ -456,7 +458,7 @@ func TestDirectoryBuilder(t *testing.T) {
 func TestNamespaceOverride(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{ObjectMeta: api.ObjectMeta{Namespace: "foo", Name: "test"}})))
+		w.Write([]byte(runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "foo", Name: "test"}})))
 	}))
 	defer s.Close()
 
@@ -486,8 +488,8 @@ func TestNamespaceOverride(t *testing.T) {
 func TestURLBuilder(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{ObjectMeta: api.ObjectMeta{Namespace: "foo", Name: "test"}})))
-		w.Write([]byte(runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{ObjectMeta: api.ObjectMeta{Namespace: "foo", Name: "test1"}})))
+		w.Write([]byte(runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "foo", Name: "test"}})))
+		w.Write([]byte(runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "foo", Name: "test1"}})))
 	}))
 	defer s.Close()
 
@@ -516,7 +518,7 @@ func TestURLBuilder(t *testing.T) {
 func TestURLBuilderRequireNamespace(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{ObjectMeta: api.ObjectMeta{Namespace: "foo", Name: "test"}})))
+		w.Write([]byte(runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "foo", Name: "test"}})))
 	}))
 	defer s.Close()
 
@@ -525,11 +527,11 @@ func TestURLBuilderRequireNamespace(t *testing.T) {
 		NamespaceParam("test").RequireNamespace()
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err == nil || !singular || len(test.Infos) != 0 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err == nil || !singleItemImplied || len(test.Infos) != 0 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 }
 
@@ -541,7 +543,7 @@ func TestResourceByName(t *testing.T) {
 		NamespaceParam("test")
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
 	if b.Do().Err() == nil {
 		t.Errorf("unexpected non-error")
@@ -549,9 +551,9 @@ func TestResourceByName(t *testing.T) {
 
 	b.ResourceTypeOrNameArgs(true, "pods", "foo")
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || !singular || len(test.Infos) != 1 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || !singleItemImplied || len(test.Infos) != 1 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 	if !reflect.DeepEqual(&pods.Items[0], test.Objects()[0]) {
 		t.Errorf("unexpected object: %#v", test.Objects()[0])
@@ -577,7 +579,7 @@ func TestMultipleResourceByTheSameName(t *testing.T) {
 		NamespaceParam("test")
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
 	if b.Do().Err() == nil {
 		t.Errorf("unexpected non-error")
@@ -585,9 +587,9 @@ func TestMultipleResourceByTheSameName(t *testing.T) {
 
 	b.ResourceTypeOrNameArgs(true, "pods,services", "foo", "baz")
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || singular || len(test.Infos) != 4 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || singleItemImplied || len(test.Infos) != 4 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 	if !api.Semantic.DeepDerivative([]runtime.Object{&pods.Items[0], &pods.Items[1], &svcs.Items[0], &svcs.Items[0]}, test.Objects()) {
 		t.Errorf("unexpected visited objects: %#v", test.Objects())
@@ -653,7 +655,7 @@ func TestResourceByNameWithoutRequireObject(t *testing.T) {
 		NamespaceParam("test")
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
 	if b.Do().Err() == nil {
 		t.Errorf("unexpected non-error")
@@ -661,9 +663,9 @@ func TestResourceByNameWithoutRequireObject(t *testing.T) {
 
 	b.ResourceTypeOrNameArgs(true, "pods", "foo").RequireObject(false)
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || !singular || len(test.Infos) != 1 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || !singleItemImplied || len(test.Infos) != 1 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 	if test.Infos[0].Name != "foo" {
 		t.Errorf("unexpected name: %#v", test.Infos[0].Name)
@@ -690,10 +692,10 @@ func TestResourceByNameAndEmptySelector(t *testing.T) {
 		SelectorParam("").
 		ResourceTypeOrNameArgs(true, "pods", "foo")
 
-	singular := false
-	infos, err := b.Do().IntoSingular(&singular).Infos()
-	if err != nil || !singular || len(infos) != 1 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, infos)
+	singleItemImplied := false
+	infos, err := b.Do().IntoSingleItemImplied(&singleItemImplied).Infos()
+	if err != nil || !singleItemImplied || len(infos) != 1 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, infos)
 	}
 	if !reflect.DeepEqual(&pods.Items[0], infos[0].Object) {
 		t.Errorf("unexpected object: %#v", infos[0])
@@ -710,7 +712,7 @@ func TestResourceByNameAndEmptySelector(t *testing.T) {
 
 func TestSelector(t *testing.T) {
 	pods, svc := testData()
-	labelKey := unversioned.LabelSelectorQueryParam(testapi.Default.GroupVersion().String())
+	labelKey := metav1.LabelSelectorQueryParam(api.Registry.GroupOrDie(api.GroupName).GroupVersion.String())
 	b := NewBuilder(testapi.Default.RESTMapper(), api.Scheme, fakeClientWith("", t, map[string]string{
 		"/namespaces/test/pods?" + labelKey + "=a%3Db":     runtime.EncodeOrDie(testapi.Default.Codec(), pods),
 		"/namespaces/test/services?" + labelKey + "=a%3Db": runtime.EncodeOrDie(testapi.Default.Codec(), svc),
@@ -720,7 +722,7 @@ func TestSelector(t *testing.T) {
 		Flatten()
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
 	if b.Do().Err() == nil {
 		t.Errorf("unexpected non-error")
@@ -728,9 +730,9 @@ func TestSelector(t *testing.T) {
 
 	b.ResourceTypeOrNameArgs(true, "pods,service")
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || singular || len(test.Infos) != 3 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || singleItemImplied || len(test.Infos) != 3 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 	if !api.Semantic.DeepDerivative([]runtime.Object{&pods.Items[0], &pods.Items[1], &svc.Items[0]}, test.Objects()) {
 		t.Errorf("unexpected visited objects: %#v", test.Objects())
@@ -819,7 +821,7 @@ func TestResourceTuple(t *testing.T) {
 				expectedRequests = map[string]string{
 					"/namespaces/test/pods/foo": runtime.EncodeOrDie(testapi.Default.Codec(), &pods.Items[0]),
 					"/namespaces/test/pods/bar": runtime.EncodeOrDie(testapi.Default.Codec(), &pods.Items[0]),
-					"/nodes/foo":                runtime.EncodeOrDie(testapi.Default.Codec(), &api.Node{ObjectMeta: api.ObjectMeta{Name: "foo"}}),
+					"/nodes/foo":                runtime.EncodeOrDie(testapi.Default.Codec(), &api.Node{ObjectMeta: metav1.ObjectMeta{Name: "foo"}}),
 				}
 			}
 
@@ -836,9 +838,9 @@ func TestResourceTuple(t *testing.T) {
 				continue
 			}
 			switch {
-			case (r.singular && len(testCase.args) != 1),
-				(!r.singular && len(testCase.args) == 1):
-				t.Errorf("%s: result had unexpected singular value", k)
+			case (r.singleItemImplied && len(testCase.args) != 1),
+				(!r.singleItemImplied && len(testCase.args) == 1):
+				t.Errorf("%s: result had unexpected singleItemImplied value", k)
 			}
 			info, err := r.Infos()
 			if err != nil {
@@ -858,11 +860,11 @@ func TestStream(t *testing.T) {
 		NamespaceParam("test").Stream(r, "STDIN").Flatten()
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || singular || len(test.Infos) != 3 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || singleItemImplied || len(test.Infos) != 3 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 	if !api.Semantic.DeepDerivative([]runtime.Object{&pods.Items[0], &pods.Items[1], &rc.Items[0]}, test.Objects()) {
 		t.Errorf("unexpected visited objects: %#v", test.Objects())
@@ -875,11 +877,11 @@ func TestYAMLStream(t *testing.T) {
 		NamespaceParam("test").Stream(r, "STDIN").Flatten()
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || singular || len(test.Infos) != 3 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || singleItemImplied || len(test.Infos) != 3 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 	if !api.Semantic.DeepDerivative([]runtime.Object{&pods.Items[0], &pods.Items[1], &rc.Items[0]}, test.Objects()) {
 		t.Errorf("unexpected visited objects: %#v", test.Objects())
@@ -938,7 +940,7 @@ func TestContinueOnErrorVisitor(t *testing.T) {
 	}
 }
 
-func TestSingularObject(t *testing.T) {
+func TestSingleItemImpliedObject(t *testing.T) {
 	obj, err := NewBuilder(testapi.Default.RESTMapper(), api.Scheme, fakeClient(), testapi.Default.Codec()).
 		NamespaceParam("test").DefaultNamespace().
 		FilenameParam(false, &FilenameOptions{Recursive: false, Filenames: []string{"../../../examples/guestbook/legacy/redis-master-controller.yaml"}}).
@@ -958,7 +960,7 @@ func TestSingularObject(t *testing.T) {
 	}
 }
 
-func TestSingularObjectNoExtension(t *testing.T) {
+func TestSingleItemImpliedObjectNoExtension(t *testing.T) {
 	obj, err := NewBuilder(testapi.Default.RESTMapper(), api.Scheme, fakeClient(), testapi.Default.Codec()).
 		NamespaceParam("test").DefaultNamespace().
 		FilenameParam(false, &FilenameOptions{Recursive: false, Filenames: []string{"../../../examples/pod"}}).
@@ -978,8 +980,8 @@ func TestSingularObjectNoExtension(t *testing.T) {
 	}
 }
 
-func TestSingularRootScopedObject(t *testing.T) {
-	node := &api.Node{ObjectMeta: api.ObjectMeta{Name: "test"}, Spec: api.NodeSpec{ExternalID: "test"}}
+func TestSingleItemImpliedRootScopedObject(t *testing.T) {
+	node := &api.Node{ObjectMeta: metav1.ObjectMeta{Name: "test"}, Spec: api.NodeSpec{ExternalID: "test"}}
 	r := streamTestObject(node)
 	infos, err := NewBuilder(testapi.Default.RESTMapper(), api.Scheme, fakeClient(), testapi.Default.Codec()).
 		NamespaceParam("test").DefaultNamespace().
@@ -1005,7 +1007,7 @@ func TestSingularRootScopedObject(t *testing.T) {
 
 func TestListObject(t *testing.T) {
 	pods, _ := testData()
-	labelKey := unversioned.LabelSelectorQueryParam(testapi.Default.GroupVersion().String())
+	labelKey := metav1.LabelSelectorQueryParam(api.Registry.GroupOrDie(api.GroupName).GroupVersion.String())
 	b := NewBuilder(testapi.Default.RESTMapper(), api.Scheme, fakeClientWith("", t, map[string]string{
 		"/namespaces/test/pods?" + labelKey + "=a%3Db": runtime.EncodeOrDie(testapi.Default.Codec(), pods),
 	}), testapi.Default.Codec()).
@@ -1038,7 +1040,7 @@ func TestListObject(t *testing.T) {
 
 func TestListObjectWithDifferentVersions(t *testing.T) {
 	pods, svc := testData()
-	labelKey := unversioned.LabelSelectorQueryParam(testapi.Default.GroupVersion().String())
+	labelKey := metav1.LabelSelectorQueryParam(api.Registry.GroupOrDie(api.GroupName).GroupVersion.String())
 	obj, err := NewBuilder(testapi.Default.RESTMapper(), api.Scheme, fakeClientWith("", t, map[string]string{
 		"/namespaces/test/pods?" + labelKey + "=a%3Db":     runtime.EncodeOrDie(testapi.Default.Codec(), pods),
 		"/namespaces/test/services?" + labelKey + "=a%3Db": runtime.EncodeOrDie(testapi.Default.Codec(), svc),
@@ -1111,13 +1113,13 @@ func TestWatchMultipleError(t *testing.T) {
 func TestLatest(t *testing.T) {
 	r, _, _ := streamTestData()
 	newPod := &api.Pod{
-		ObjectMeta: api.ObjectMeta{Name: "foo", Namespace: "test", ResourceVersion: "13"},
+		ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "test", ResourceVersion: "13"},
 	}
 	newPod2 := &api.Pod{
-		ObjectMeta: api.ObjectMeta{Name: "bar", Namespace: "test", ResourceVersion: "14"},
+		ObjectMeta: metav1.ObjectMeta{Name: "bar", Namespace: "test", ResourceVersion: "14"},
 	}
 	newSvc := &api.Service{
-		ObjectMeta: api.ObjectMeta{Name: "baz", Namespace: "test", ResourceVersion: "15"},
+		ObjectMeta: metav1.ObjectMeta{Name: "baz", Namespace: "test", ResourceVersion: "15"},
 	}
 
 	b := NewBuilder(testapi.Default.RESTMapper(), api.Scheme, fakeClientWith("", t, map[string]string{
@@ -1128,11 +1130,11 @@ func TestLatest(t *testing.T) {
 		NamespaceParam("other").Stream(r, "STDIN").Flatten().Latest()
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err != nil || singular || len(test.Infos) != 3 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err != nil || singleItemImplied || len(test.Infos) != 3 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 	if !api.Semantic.DeepDerivative([]runtime.Object{newPod, newPod2, newSvc}, test.Objects()) {
 		t.Errorf("unexpected visited objects: %#v", test.Objects())
@@ -1161,11 +1163,11 @@ func TestReceiveMultipleErrors(t *testing.T) {
 		ContinueOnError()
 
 	test := &testVisitor{}
-	singular := false
+	singleItemImplied := false
 
-	err := b.Do().IntoSingular(&singular).Visit(test.Handle)
-	if err == nil || singular || len(test.Infos) != 2 {
-		t.Fatalf("unexpected response: %v %t %#v", err, singular, test.Infos)
+	err := b.Do().IntoSingleItemImplied(&singleItemImplied).Visit(test.Handle)
+	if err == nil || singleItemImplied || len(test.Infos) != 2 {
+		t.Fatalf("unexpected response: %v %t %#v", err, singleItemImplied, test.Infos)
 	}
 
 	errs, ok := err.(utilerrors.Aggregate)
@@ -1178,6 +1180,7 @@ func TestReceiveMultipleErrors(t *testing.T) {
 }
 
 func TestHasNames(t *testing.T) {
+	basename := filepath.Base(os.Args[0])
 	tests := []struct {
 		args            []string
 		expectedHasName bool
@@ -1221,16 +1224,78 @@ func TestHasNames(t *testing.T) {
 		{
 			args:            []string{"rc/foo", "bar"},
 			expectedHasName: false,
-			expectedError:   fmt.Errorf("there is no need to specify a resource type as a separate argument when passing arguments in resource/name form (e.g. 'resource.test get resource/<resource_name>' instead of 'resource.test get resource resource/<resource_name>'"),
+			expectedError:   fmt.Errorf("there is no need to specify a resource type as a separate argument when passing arguments in resource/name form (e.g. '" + basename + " get resource/<resource_name>' instead of '" + basename + " get resource resource/<resource_name>'"),
 		},
 	}
 	for _, test := range tests {
 		hasNames, err := HasNames(test.args)
 		if !reflect.DeepEqual(test.expectedError, err) {
-			t.Errorf("expected HasName to error %v, got %s", test.expectedError, err)
+			t.Errorf("expected HasName to error:\n%s\tgot:\n%s", test.expectedError, err)
 		}
 		if hasNames != test.expectedHasName {
 			t.Errorf("expected HasName to return %v for %s", test.expectedHasName, test.args)
+		}
+	}
+}
+
+func TestMultipleTypesRequested(t *testing.T) {
+	tests := []struct {
+		args                  []string
+		expectedMultipleTypes bool
+	}{
+		{
+			args: []string{""},
+			expectedMultipleTypes: false,
+		},
+		{
+			args: []string{"all"},
+			expectedMultipleTypes: true,
+		},
+		{
+			args: []string{"rc"},
+			expectedMultipleTypes: false,
+		},
+		{
+			args: []string{"pod,all"},
+			expectedMultipleTypes: true,
+		},
+		{
+			args: []string{"all,rc,pod"},
+			expectedMultipleTypes: true,
+		},
+		{
+			args: []string{"rc,pod,svc"},
+			expectedMultipleTypes: true,
+		},
+		{
+			args: []string{"rc/foo"},
+			expectedMultipleTypes: false,
+		},
+		{
+			args: []string{"rc/foo", "rc/bar"},
+			expectedMultipleTypes: false,
+		},
+		{
+			args: []string{"rc", "foo"},
+			expectedMultipleTypes: false,
+		},
+		{
+			args: []string{"rc,pod,svc", "foo"},
+			expectedMultipleTypes: true,
+		},
+		{
+			args: []string{"rc,secrets"},
+			expectedMultipleTypes: true,
+		},
+		{
+			args: []string{"rc/foo", "rc/bar", "svc/svc"},
+			expectedMultipleTypes: true,
+		},
+	}
+	for _, test := range tests {
+		hasMultipleTypes := MultipleTypesRequested(test.args)
+		if hasMultipleTypes != test.expectedMultipleTypes {
+			t.Errorf("expected MultipleTypesRequested to return %v for %s", test.expectedMultipleTypes, test.args)
 		}
 	}
 }

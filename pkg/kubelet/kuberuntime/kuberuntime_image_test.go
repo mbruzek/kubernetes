@@ -20,16 +20,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/util/sets"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/util/sets"
 )
 
 func TestPullImage(t *testing.T) {
 	_, _, fakeManager, err := createTestRuntimeManager()
 	assert.NoError(t, err)
 
-	err = fakeManager.PullImage(kubecontainer.ImageSpec{Image: "busybox"}, nil)
+	imageRef, err := fakeManager.PullImage(kubecontainer.ImageSpec{Image: "busybox"}, nil)
 	assert.NoError(t, err)
+	assert.Equal(t, "busybox", imageRef)
 
 	images, err := fakeManager.ListImages()
 	assert.NoError(t, err)
@@ -55,26 +56,41 @@ func TestListImages(t *testing.T) {
 	assert.Equal(t, expected.List(), actual.List())
 }
 
-func TestIsImagePresent(t *testing.T) {
+func TestGetImageRef(t *testing.T) {
 	_, fakeImageService, fakeManager, err := createTestRuntimeManager()
 	assert.NoError(t, err)
 
 	image := "busybox"
 	fakeImageService.SetFakeImages([]string{image})
-	present, err := fakeManager.IsImagePresent(kubecontainer.ImageSpec{Image: image})
+	imageRef, err := fakeManager.GetImageRef(kubecontainer.ImageSpec{Image: image})
 	assert.NoError(t, err)
-	assert.Equal(t, true, present)
+	assert.Equal(t, image, imageRef)
 }
 
 func TestRemoveImage(t *testing.T) {
 	_, fakeImageService, fakeManager, err := createTestRuntimeManager()
 	assert.NoError(t, err)
 
-	err = fakeManager.PullImage(kubecontainer.ImageSpec{Image: "busybox"}, nil)
+	_, err = fakeManager.PullImage(kubecontainer.ImageSpec{Image: "busybox"}, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(fakeImageService.Images))
 
 	err = fakeManager.RemoveImage(kubecontainer.ImageSpec{Image: "busybox"})
 	assert.NoError(t, err)
 	assert.Equal(t, 0, len(fakeImageService.Images))
+}
+
+func TestImageStats(t *testing.T) {
+	_, fakeImageService, fakeManager, err := createTestRuntimeManager()
+	assert.NoError(t, err)
+
+	const imageSize = 64
+	fakeImageService.SetFakeImageSize(imageSize)
+	images := []string{"1111", "2222", "3333"}
+	fakeImageService.SetFakeImages(images)
+
+	actualStats, err := fakeManager.ImageStats()
+	assert.NoError(t, err)
+	expectedStats := &kubecontainer.ImageStats{TotalStorageBytes: imageSize * uint64(len(images))}
+	assert.Equal(t, expectedStats, actualStats)
 }

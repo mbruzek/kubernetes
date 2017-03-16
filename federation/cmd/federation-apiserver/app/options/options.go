@@ -20,22 +20,40 @@ package options
 import (
 	"time"
 
-	genericoptions "k8s.io/kubernetes/pkg/genericapiserver/options"
+	genericoptions "k8s.io/kubernetes/pkg/genericapiserver/server/options"
+	kubeoptions "k8s.io/kubernetes/pkg/kubeapiserver/options"
+
+	// add the kubernetes feature gates
+	_ "k8s.io/kubernetes/pkg/features"
 
 	"github.com/spf13/pflag"
 )
 
 // Runtime options for the federation-apiserver.
 type ServerRunOptions struct {
-	*genericoptions.ServerRunOptions
+	GenericServerRunOptions *genericoptions.ServerRunOptions
+	Etcd                    *genericoptions.EtcdOptions
+	SecureServing           *genericoptions.SecureServingOptions
+	InsecureServing         *genericoptions.ServingOptions
+	Authentication          *kubeoptions.BuiltInAuthenticationOptions
+	Authorization           *kubeoptions.BuiltInAuthorizationOptions
+	CloudProvider           *kubeoptions.CloudProviderOptions
+
 	EventTTL time.Duration
 }
 
 // NewServerRunOptions creates a new ServerRunOptions object with default values.
 func NewServerRunOptions() *ServerRunOptions {
 	s := ServerRunOptions{
-		ServerRunOptions: genericoptions.NewServerRunOptions().WithEtcdOptions(),
-		EventTTL:         1 * time.Hour,
+		GenericServerRunOptions: genericoptions.NewServerRunOptions(),
+		Etcd:            genericoptions.NewEtcdOptions(),
+		SecureServing:   genericoptions.NewSecureServingOptions(),
+		InsecureServing: genericoptions.NewInsecureServingOptions(),
+		Authentication:  kubeoptions.NewBuiltInAuthenticationOptions().WithAll(),
+		Authorization:   kubeoptions.NewBuiltInAuthorizationOptions(),
+		CloudProvider:   kubeoptions.NewCloudProviderOptions(),
+
+		EventTTL: 1 * time.Hour,
 	}
 	return &s
 }
@@ -43,9 +61,13 @@ func NewServerRunOptions() *ServerRunOptions {
 // AddFlags adds flags for ServerRunOptions fields to be specified via FlagSet.
 func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	// Add the generic flags.
-	s.ServerRunOptions.AddUniversalFlags(fs)
-	//Add etcd specific flags.
-	s.ServerRunOptions.AddEtcdStorageFlags(fs)
+	s.GenericServerRunOptions.AddUniversalFlags(fs)
+	s.Etcd.AddFlags(fs)
+	s.SecureServing.AddFlags(fs)
+	s.InsecureServing.AddFlags(fs)
+	s.Authentication.AddFlags(fs)
+	s.Authorization.AddFlags(fs)
+	s.CloudProvider.AddFlags(fs)
 
 	fs.DurationVar(&s.EventTTL, "event-ttl", s.EventTTL,
 		"Amount of time to retain events. Default is 1h.")

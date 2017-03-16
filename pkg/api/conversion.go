@@ -18,21 +18,22 @@ package api
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/conversion"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/conversion"
-	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/labels"
-	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/util/intstr"
 	utillabels "k8s.io/kubernetes/pkg/util/labels"
-	"k8s.io/kubernetes/pkg/util/validation/field"
 )
 
 func addConversionFuncs(scheme *runtime.Scheme) error {
 	return scheme.AddConversionFuncs(
-		Convert_unversioned_TypeMeta_To_unversioned_TypeMeta,
+		Convert_v1_TypeMeta_To_v1_TypeMeta,
 
 		Convert_unversioned_ListMeta_To_unversioned_ListMeta,
 
@@ -67,6 +68,8 @@ func addConversionFuncs(scheme *runtime.Scheme) error {
 
 		Convert_map_to_unversioned_LabelSelector,
 		Convert_unversioned_LabelSelector_to_map,
+
+		Convert_Slice_string_To_Slice_int32,
 	)
 }
 
@@ -153,31 +156,35 @@ func Convert_bool_To_Pointer_bool(in *bool, out **bool, s conversion.Scope) erro
 	return nil
 }
 
-func Convert_unversioned_TypeMeta_To_unversioned_TypeMeta(in, out *unversioned.TypeMeta, s conversion.Scope) error {
+// +k8s:conversion-fn=drop
+func Convert_v1_TypeMeta_To_v1_TypeMeta(in, out *metav1.TypeMeta, s conversion.Scope) error {
 	// These values are explicitly not copied
 	//out.APIVersion = in.APIVersion
 	//out.Kind = in.Kind
 	return nil
 }
 
-func Convert_unversioned_ListMeta_To_unversioned_ListMeta(in, out *unversioned.ListMeta, s conversion.Scope) error {
+// +k8s:conversion-fn=copy-only
+func Convert_unversioned_ListMeta_To_unversioned_ListMeta(in, out *metav1.ListMeta, s conversion.Scope) error {
 	*out = *in
 	return nil
 }
 
+// +k8s:conversion-fn=copy-only
 func Convert_intstr_IntOrString_To_intstr_IntOrString(in, out *intstr.IntOrString, s conversion.Scope) error {
 	*out = *in
 	return nil
 }
 
-func Convert_unversioned_Time_To_unversioned_Time(in *unversioned.Time, out *unversioned.Time, s conversion.Scope) error {
+// +k8s:conversion-fn=copy-only
+func Convert_unversioned_Time_To_unversioned_Time(in *metav1.Time, out *metav1.Time, s conversion.Scope) error {
 	// Cannot deep copy these, because time.Time has unexported fields.
 	*out = *in
 	return nil
 }
 
 // Convert_Slice_string_To_unversioned_Time allows converting a URL query parameter value
-func Convert_Slice_string_To_unversioned_Time(input *[]string, out *unversioned.Time, s conversion.Scope) error {
+func Convert_Slice_string_To_unversioned_Time(input *[]string, out *metav1.Time, s conversion.Scope) error {
 	str := ""
 	if len(*input) > 0 {
 		str = (*input)[0]
@@ -219,27 +226,41 @@ func Convert_fields_Selector_To_string(in *fields.Selector, out *string, s conve
 	return nil
 }
 
+// +k8s:conversion-fn=copy-only
 func Convert_resource_Quantity_To_resource_Quantity(in *resource.Quantity, out *resource.Quantity, s conversion.Scope) error {
 	*out = *in
 	return nil
 }
 
-func Convert_map_to_unversioned_LabelSelector(in *map[string]string, out *unversioned.LabelSelector, s conversion.Scope) error {
+func Convert_map_to_unversioned_LabelSelector(in *map[string]string, out *metav1.LabelSelector, s conversion.Scope) error {
 	if in == nil {
 		return nil
 	}
-	out = new(unversioned.LabelSelector)
+	out = new(metav1.LabelSelector)
 	for labelKey, labelValue := range *in {
 		utillabels.AddLabelToSelector(out, labelKey, labelValue)
 	}
 	return nil
 }
 
-func Convert_unversioned_LabelSelector_to_map(in *unversioned.LabelSelector, out *map[string]string, s conversion.Scope) error {
+func Convert_unversioned_LabelSelector_to_map(in *metav1.LabelSelector, out *map[string]string, s conversion.Scope) error {
 	var err error
-	*out, err = unversioned.LabelSelectorAsMap(in)
-	if err != nil {
-		err = field.Invalid(field.NewPath("labelSelector"), *in, fmt.Sprintf("cannot convert to old selector: %v", err))
-	}
+	*out, err = metav1.LabelSelectorAsMap(in)
 	return err
+}
+
+// Convert_Slice_string_To_Slice_int32 converts multiple query parameters or
+// a single query parameter with a comma delimited value to multiple int32.
+// This is used for port forwarding which needs the ports as int32.
+func Convert_Slice_string_To_Slice_int32(in *[]string, out *[]int32, s conversion.Scope) error {
+	for _, s := range *in {
+		for _, v := range strings.Split(s, ",") {
+			x, err := strconv.ParseUint(v, 10, 16)
+			if err != nil {
+				return fmt.Errorf("cannot convert to []int32: %v", err)
+			}
+			*out = append(*out, int32(x))
+		}
+	}
+	return nil
 }

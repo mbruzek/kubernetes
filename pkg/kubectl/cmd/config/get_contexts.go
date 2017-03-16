@@ -23,13 +23,13 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
-	clientcmdapi "k8s.io/kubernetes/pkg/client/unversioned/clientcmd/api"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/kubernetes/pkg/kubectl"
-
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	utilerrors "k8s.io/kubernetes/pkg/util/errors"
-	"k8s.io/kubernetes/pkg/util/sets"
 )
 
 // GetContextsOptions contains the assignable options from the args.
@@ -41,14 +41,15 @@ type GetContextsOptions struct {
 	out          io.Writer
 }
 
-const (
-	getContextsLong = `Displays one or many contexts from the kubeconfig file.`
+var (
+	getContextsLong = templates.LongDesc(`Displays one or many contexts from the kubeconfig file.`)
 
-	getContextsExample = `# List all the contexts in your kubeconfig file
-kubectl config get-contexts
+	getContextsExample = templates.Examples(`
+		# List all the contexts in your kubeconfig file
+		kubectl config get-contexts
 
-# Describe one context in your kubeconfig file.
-kubectl config get-contexts my-context`
+		# Describe one context in your kubeconfig file.
+		kubectl config get-contexts my-context`)
 )
 
 // NewCmdConfigGetContexts creates a command object for the "get-contexts" action, which

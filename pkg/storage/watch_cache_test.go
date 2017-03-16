@@ -21,20 +21,22 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/clock"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/client/cache"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/clock"
-	"k8s.io/kubernetes/pkg/util/sets"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/watch"
 )
 
 func makeTestPod(name string, resourceVersion uint64) *api.Pod {
 	return &api.Pod{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       "ns",
 			Name:            name,
 			ResourceVersion: strconv.FormatUint(resourceVersion, 10),
@@ -44,7 +46,13 @@ func makeTestPod(name string, resourceVersion uint64) *api.Pod {
 
 // newTestWatchCache just adds a fake clock.
 func newTestWatchCache(capacity int) *watchCache {
-	wc := newWatchCache(capacity)
+	keyFunc := func(obj runtime.Object) (string, error) {
+		return NamespaceKeyFunc("prefix", obj)
+	}
+	getAttrsFunc := func(obj runtime.Object) (labels.Set, fields.Set, error) {
+		return nil, nil, nil
+	}
+	wc := newWatchCache(capacity, keyFunc, getAttrsFunc)
 	wc.clock = clock.NewFakeClock(time.Now())
 	return wc
 }
@@ -60,7 +68,7 @@ func TestWatchCacheBasic(t *testing.T) {
 	if item, ok, _ := store.Get(pod1); !ok {
 		t.Errorf("didn't find pod")
 	} else {
-		if !api.Semantic.DeepEqual(pod1, item) {
+		if !api.Semantic.DeepEqual(&storeElement{Key: "prefix/ns/pod", Object: pod1}, item) {
 			t.Errorf("expected %v, got %v", pod1, item)
 		}
 	}
@@ -71,7 +79,7 @@ func TestWatchCacheBasic(t *testing.T) {
 	if item, ok, _ := store.Get(pod2); !ok {
 		t.Errorf("didn't find pod")
 	} else {
-		if !api.Semantic.DeepEqual(pod2, item) {
+		if !api.Semantic.DeepEqual(&storeElement{Key: "prefix/ns/pod", Object: pod2}, item) {
 			t.Errorf("expected %v, got %v", pod1, item)
 		}
 	}
@@ -90,7 +98,7 @@ func TestWatchCacheBasic(t *testing.T) {
 	{
 		podNames := sets.String{}
 		for _, item := range store.List() {
-			podNames.Insert(item.(*api.Pod).ObjectMeta.Name)
+			podNames.Insert(item.(*storeElement).Object.(*api.Pod).ObjectMeta.Name)
 		}
 		if !podNames.HasAll("pod1", "pod2", "pod3") {
 			t.Errorf("missing pods, found %v", podNames)
@@ -108,7 +116,7 @@ func TestWatchCacheBasic(t *testing.T) {
 	{
 		podNames := sets.String{}
 		for _, item := range store.List() {
-			podNames.Insert(item.(*api.Pod).ObjectMeta.Name)
+			podNames.Insert(item.(*storeElement).Object.(*api.Pod).ObjectMeta.Name)
 		}
 		if !podNames.HasAll("pod4", "pod5") {
 			t.Errorf("missing pods, found %v", podNames)
@@ -248,7 +256,7 @@ func TestWaitUntilFreshAndList(t *testing.T) {
 		store.Add(makeTestPod("bar", 5))
 	}()
 
-	list, resourceVersion, err := store.WaitUntilFreshAndList(5)
+	list, resourceVersion, err := store.WaitUntilFreshAndList(5, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -257,6 +265,30 @@ func TestWaitUntilFreshAndList(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Errorf("unexpected list returned: %#v", list)
+	}
+}
+
+func TestWaitUntilFreshAndGet(t *testing.T) {
+	store := newTestWatchCache(3)
+
+	// In background, update the store.
+	go func() {
+		store.Add(makeTestPod("foo", 2))
+		store.Add(makeTestPod("bar", 5))
+	}()
+
+	obj, exists, resourceVersion, err := store.WaitUntilFreshAndGet(5, "prefix/ns/bar", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resourceVersion != 5 {
+		t.Errorf("unexpected resourceVersion: %v, expected: 5", resourceVersion)
+	}
+	if !exists {
+		t.Fatalf("no results returned: %#v", obj)
+	}
+	if !api.Semantic.DeepEqual(&storeElement{Key: "prefix/ns/bar", Object: makeTestPod("bar", 5)}, obj) {
+		t.Errorf("unexpected element returned: %#v", obj)
 	}
 }
 
@@ -269,7 +301,7 @@ func TestWaitUntilFreshAndListTimeout(t *testing.T) {
 		for !fc.HasWaiters() {
 			time.Sleep(time.Millisecond)
 		}
-		fc.Step(MaximumListWait)
+		fc.Step(blockTimeout)
 
 		// Add an object to make sure the test would
 		// eventually fail instead of just waiting
@@ -278,21 +310,21 @@ func TestWaitUntilFreshAndListTimeout(t *testing.T) {
 		store.Add(makeTestPod("bar", 5))
 	}()
 
-	_, _, err := store.WaitUntilFreshAndList(5)
+	_, _, err := store.WaitUntilFreshAndList(5, nil)
 	if err == nil {
 		t.Fatalf("unexpected lack of timeout error")
 	}
 }
 
 type testLW struct {
-	ListFunc  func(options api.ListOptions) (runtime.Object, error)
-	WatchFunc func(options api.ListOptions) (watch.Interface, error)
+	ListFunc  func(options metav1.ListOptions) (runtime.Object, error)
+	WatchFunc func(options metav1.ListOptions) (watch.Interface, error)
 }
 
-func (t *testLW) List(options api.ListOptions) (runtime.Object, error) {
+func (t *testLW) List(options metav1.ListOptions) (runtime.Object, error) {
 	return t.ListFunc(options)
 }
-func (t *testLW) Watch(options api.ListOptions) (watch.Interface, error) {
+func (t *testLW) Watch(options metav1.ListOptions) (watch.Interface, error) {
 	return t.WatchFunc(options)
 }
 
@@ -300,7 +332,7 @@ func TestReflectorForWatchCache(t *testing.T) {
 	store := newTestWatchCache(5)
 
 	{
-		_, version, err := store.WaitUntilFreshAndList(0)
+		_, version, err := store.WaitUntilFreshAndList(0, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -310,20 +342,20 @@ func TestReflectorForWatchCache(t *testing.T) {
 	}
 
 	lw := &testLW{
-		WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 			fw := watch.NewFake()
 			go fw.Stop()
 			return fw, nil
 		},
-		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-			return &api.PodList{ListMeta: unversioned.ListMeta{ResourceVersion: "10"}}, nil
+		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			return &api.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}}, nil
 		},
 	}
 	r := cache.NewReflector(lw, &api.Pod{}, store, 0)
 	r.ListAndWatch(wait.NeverStop)
 
 	{
-		_, version, err := store.WaitUntilFreshAndList(10)
+		_, version, err := store.WaitUntilFreshAndList(10, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

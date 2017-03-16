@@ -17,20 +17,19 @@ limitations under the License.
 package dockershim
 
 import (
-	"fmt"
-
 	dockertypes "github.com/docker/engine-api/types"
-	runtimeApi "k8s.io/kubernetes/pkg/kubelet/api/v1alpha1/runtime"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/api/v1alpha1/runtime"
+	"k8s.io/kubernetes/pkg/kubelet/dockertools"
 )
 
 // This file implements methods in ImageManagerService.
 
 // ListImages lists existing images.
-func (ds *dockerService) ListImages(filter *runtimeApi.ImageFilter) ([]*runtimeApi.Image, error) {
+func (ds *dockerService) ListImages(filter *runtimeapi.ImageFilter) ([]*runtimeapi.Image, error) {
 	opts := dockertypes.ImageListOptions{}
 	if filter != nil {
 		if imgSpec := filter.GetImage(); imgSpec != nil {
-			opts.MatchName = imgSpec.GetImage()
+			opts.MatchName = imgSpec.Image
 		}
 	}
 
@@ -39,9 +38,9 @@ func (ds *dockerService) ListImages(filter *runtimeApi.ImageFilter) ([]*runtimeA
 		return nil, err
 	}
 
-	result := []*runtimeApi.Image{}
+	result := []*runtimeapi.Image{}
 	for _, i := range images {
-		apiImage, err := toRuntimeAPIImage(&i)
+		apiImage, err := imageToRuntimeAPIImage(&i)
 		if err != nil {
 			// TODO: log an error message?
 			continue
@@ -51,34 +50,54 @@ func (ds *dockerService) ListImages(filter *runtimeApi.ImageFilter) ([]*runtimeA
 	return result, nil
 }
 
-// ImageStatus returns the status of the image.
-func (ds *dockerService) ImageStatus(image *runtimeApi.ImageSpec) (*runtimeApi.Image, error) {
-	images, err := ds.ListImages(&runtimeApi.ImageFilter{Image: image})
+// ImageStatus returns the status of the image, returns nil if the image doesn't present.
+func (ds *dockerService) ImageStatus(image *runtimeapi.ImageSpec) (*runtimeapi.Image, error) {
+	imageInspect, err := ds.client.InspectImageByRef(image.Image)
 	if err != nil {
+		if dockertools.IsImageNotFoundError(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	if len(images) != 1 {
-		return nil, fmt.Errorf("ImageStatus returned more than one image: %+v", images)
-	}
-	return images[0], nil
+	return imageInspectToRuntimeAPIImage(imageInspect)
 }
 
 // PullImage pulls an image with authentication config.
-func (ds *dockerService) PullImage(image *runtimeApi.ImageSpec, auth *runtimeApi.AuthConfig) error {
-	return ds.client.PullImage(image.GetImage(),
-		dockertypes.AuthConfig{
-			Username:      auth.GetUsername(),
-			Password:      auth.GetPassword(),
-			ServerAddress: auth.GetServerAddress(),
-			IdentityToken: auth.GetIdentityToken(),
-			RegistryToken: auth.GetRegistryToken(),
-		},
+func (ds *dockerService) PullImage(image *runtimeapi.ImageSpec, auth *runtimeapi.AuthConfig) (string, error) {
+	authConfig := dockertypes.AuthConfig{}
+	if auth != nil {
+		authConfig.Username = auth.Username
+		authConfig.Password = auth.Password
+		authConfig.ServerAddress = auth.ServerAddress
+		authConfig.IdentityToken = auth.IdentityToken
+		authConfig.RegistryToken = auth.RegistryToken
+	}
+	err := ds.client.PullImage(image.Image,
+		authConfig,
 		dockertypes.ImagePullOptions{},
 	)
+	if err != nil {
+		return "", err
+	}
+
+	return dockertools.GetImageRef(ds.client, image.Image)
 }
 
 // RemoveImage removes the image.
-func (ds *dockerService) RemoveImage(image *runtimeApi.ImageSpec) error {
-	_, err := ds.client.RemoveImage(image.GetImage(), dockertypes.ImageRemoveOptions{PruneChildren: true})
+func (ds *dockerService) RemoveImage(image *runtimeapi.ImageSpec) error {
+	// If the image has multiple tags, we need to remove all the tags
+	// TODO: We assume image.Image is image ID here, which is true in the current implementation
+	// of kubelet, but we should still clarify this in CRI.
+	imageInspect, err := ds.client.InspectImageByID(image.Image)
+	if err == nil && imageInspect != nil && len(imageInspect.RepoTags) > 1 {
+		for _, tag := range imageInspect.RepoTags {
+			if _, err := ds.client.RemoveImage(tag, dockertypes.ImageRemoveOptions{PruneChildren: true}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	_, err = ds.client.RemoveImage(image.Image, dockertypes.ImageRemoveOptions{PruneChildren: true})
 	return err
 }

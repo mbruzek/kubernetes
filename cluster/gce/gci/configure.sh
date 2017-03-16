@@ -54,6 +54,22 @@ for k,v in yaml.load(sys.stdin).iteritems():
   rm -f "${tmp_kube_env}"
 }
 
+function download-kube-master-certs {
+  # Fetch kube-env from GCE metadata server.
+  local -r tmp_kube_master_certs="/tmp/kube-master-certs.yaml"
+  curl --fail --retry 5 --retry-delay 3 --silent --show-error \
+    -H "X-Google-Metadata-Request: True" \
+    -o "${tmp_kube_master_certs}" \
+    http://metadata.google.internal/computeMetadata/v1/instance/attributes/kube-master-certs
+  # Convert the yaml format file into a shell-style file.
+  eval $(python -c '''
+import pipes,sys,yaml
+for k,v in yaml.load(sys.stdin).iteritems():
+  print("readonly {var}={value}".format(var = k, value = pipes.quote(str(v))))
+''' < "${tmp_kube_master_certs}" > "${KUBE_HOME}/kube-master-certs")
+  rm -f "${tmp_kube_master_certs}"
+}
+
 function validate-hash {
   local -r file="$1"
   local -r expected="$2"
@@ -98,8 +114,24 @@ function split-commas {
   echo $1 | tr "," "\n"
 }
 
+function install-gci-mounter-tools {
+    local -r rkt_version="v1.18.0"
+    local -r gci_mounter_version="v2"
+    local -r rkt_binary_sha1="75fc8f29c79bc9e505f3e7f6e8fadf2425c21967"
+    local -r rkt_stage1_fly_sha1="474df5a1f934960ba669b360ab713d0a54283091"
+    local -r gci_mounter_sha1="851e841d8640d6a05e64e22c493f5ac3c4cba561"
+    download-or-bust "${rkt_binary_sha1}" "https://storage.googleapis.com/kubernetes-release/rkt/${rkt_version}/rkt"
+    download-or-bust "${rkt_stage1_fly_sha1}" "https://storage.googleapis.com/kubernetes-release/rkt/${rkt_version}/stage1-fly.aci"
+    download-or-bust "${gci_mounter_sha1}" "https://storage.googleapis.com/kubernetes-release/gci-mounter/gci-mounter-${gci_mounter_version}.aci"
+    local -r rkt_dst="${KUBE_HOME}/bin/"
+    mv "${KUBE_HOME}/rkt" "${rkt_dst}/rkt"
+    mv "${KUBE_HOME}/stage1-fly.aci" "${rkt_dst}/stage1-fly.aci"
+    mv "${KUBE_HOME}/gci-mounter-${gci_mounter_version}.aci" "${rkt_dst}/gci-mounter-${gci_mounter_version}.aci"
+    chmod a+x "${rkt_dst}/rkt"
+}
+
 # Downloads kubernetes binaries and kube-system manifest tarball, unpacks them,
-# and places them into suitable directories. Files are placed in /home/kubernetes. 
+# and places them into suitable directories. Files are placed in /home/kubernetes.
 function install-kube-binary-config {
   cd "${KUBE_HOME}"
   local -r server_binary_tar_urls=( $(split-commas "${SERVER_BINARY_TAR_URL}") )
@@ -171,9 +203,13 @@ function install-kube-binary-config {
       xargs sed -ri "s@(image\":\s+\")gcr.io/google_containers@\1${kube_addon_registry}@"
   fi
   cp "${dst_dir}/kubernetes/gci-trusty/gci-configure-helper.sh" "${KUBE_HOME}/bin/configure-helper.sh"
+  cp "${dst_dir}/kubernetes/gci-trusty/gci-mounter" "${KUBE_HOME}/bin/mounter"
   cp "${dst_dir}/kubernetes/gci-trusty/health-monitor.sh" "${KUBE_HOME}/bin/health-monitor.sh"
   chmod -R 755 "${kube_bin}"
 
+  # Install gci mounter related artifacts to allow mounting storage volumes in GCI
+  install-gci-mounter-tools
+  
   # Clean up.
   rm -rf "${KUBE_HOME}/kubernetes"
   rm -f "${KUBE_HOME}/${server_binary_tar}"
@@ -182,12 +218,15 @@ function install-kube-binary-config {
   rm -f "${KUBE_HOME}/${manifests_tar}.sha1"
 }
 
-
 ######### Main Function ##########
 echo "Start to install kubernetes files"
 set-broken-motd
 KUBE_HOME="/home/kubernetes"
 download-kube-env
 source "${KUBE_HOME}/kube-env"
+if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+  download-kube-master-certs
+fi
 install-kube-binary-config
 echo "Done for installing kubernetes files"
+

@@ -24,16 +24,25 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"k8s.io/kubernetes/pkg/api/unversioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
-func NewCmdApiVersions(f *cmdutil.Factory, out io.Writer) *cobra.Command {
+var (
+	apiversions_example = templates.Examples(`
+		# Print the supported API versions
+		kubectl api-versions`)
+)
+
+func NewCmdApiVersions(f cmdutil.Factory, out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "api-versions",
 		// apiversions is deprecated.
 		Aliases: []string{"apiversions"},
 		Short:   "Print the supported API versions on the server, in the form of \"group/version\"",
+		Long:    "Print the supported API versions on the server, in the form of \"group/version\"",
+		Example: apiversions_example,
 		Run: func(cmd *cobra.Command, args []string) {
 			err := RunApiVersions(f, out)
 			cmdutil.CheckErr(err)
@@ -42,7 +51,7 @@ func NewCmdApiVersions(f *cmdutil.Factory, out io.Writer) *cobra.Command {
 	return cmd
 }
 
-func RunApiVersions(f *cmdutil.Factory, w io.Writer) error {
+func RunApiVersions(f cmdutil.Factory, w io.Writer) error {
 	if len(os.Args) > 1 && os.Args[1] == "apiversions" {
 		printDeprecationWarning("api-versions", "apiversions")
 	}
@@ -56,7 +65,7 @@ func RunApiVersions(f *cmdutil.Factory, w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("Couldn't get available api versions from server: %v\n", err)
 	}
-	apiVersions := unversioned.ExtractGroupVersions(groupList)
+	apiVersions := metav1.ExtractGroupVersions(groupList)
 	sort.Strings(apiVersions)
 	for _, v := range apiVersions {
 		fmt.Fprintln(w, v)

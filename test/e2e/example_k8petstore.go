@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,7 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
 	"k8s.io/kubernetes/test/e2e/framework"
 
 	. "github.com/onsi/ginkgo"
@@ -47,26 +48,35 @@ const (
 
 // readTransactions reads # of transactions from the k8petstore web server endpoint.
 // for more details see the source of the k8petstore web server.
-func readTransactions(c *client.Client, ns string) (error, int) {
-	proxyRequest, errProxy := framework.GetServicesProxyRequest(c, c.Get())
+func readTransactions(c clientset.Interface, ns string) (error, int) {
+	proxyRequest, errProxy := framework.GetServicesProxyRequest(c, c.Core().RESTClient().Get())
 	if errProxy != nil {
 		return errProxy, -1
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), framework.SingleCallTimeout)
+	defer cancel()
+
 	body, err := proxyRequest.Namespace(ns).
+		Context(ctx).
 		Name("frontend").
 		Suffix("llen").
 		DoRaw()
 	if err != nil {
+		if ctx.Err() != nil {
+			framework.Failf("Failed to read petstore transactions: %v", err)
+		}
 		return err, -1
-	} else {
-		totalTrans, err := strconv.Atoi(string(body))
-		return err, totalTrans
 	}
+
+	totalTrans, err := strconv.Atoi(string(body))
+	return err, totalTrans
+
 }
 
 // runK8petstore runs the k8petstore application, bound to external nodeport, and
 // polls until finalTransactionsExpected transactions are acquired, in a maximum of maxSeconds.
-func runK8petstore(restServers int, loadGenerators int, c *client.Client, ns string, finalTransactionsExpected int, maxTime time.Duration) {
+func runK8petstore(restServers int, loadGenerators int, c clientset.Interface, ns string, finalTransactionsExpected int, maxTime time.Duration) {
 
 	var err error = nil
 	k8bpsScriptLocation := filepath.Join(framework.TestContext.RepoRoot, "examples/k8petstore/k8petstore-nodeport.sh")
@@ -150,7 +160,7 @@ T:
 	// We should have exceeded the finalTransactionsExpected num of transactions.
 	// If this fails, but there are transactions being created, we may need to recalibrate
 	// the finalTransactionsExpected value - or else - your cluster is broken/slow !
-	Ω(totalTransactions).Should(BeNumerically(">", finalTransactionsExpected))
+	Expect(totalTransactions).To(BeNumerically(">", finalTransactionsExpected))
 }
 
 var _ = framework.KubeDescribe("Pet Store [Feature:Example]", func() {
@@ -165,13 +175,13 @@ var _ = framework.KubeDescribe("Pet Store [Feature:Example]", func() {
 	f := framework.NewDefaultFramework("petstore")
 
 	It(fmt.Sprintf("should scale to persist a nominal number ( %v ) of transactions in %v seconds", k8bpsSmokeTestFinalTransactions, k8bpsSmokeTestTimeout), func() {
-		nodes := framework.GetReadySchedulableNodesOrDie(f.Client)
+		nodes := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
 		nodeCount = len(nodes.Items)
 
 		loadGenerators := nodeCount
 		restServers := nodeCount
 		fmt.Printf("load generators / rest servers [ %v  /  %v ] ", loadGenerators, restServers)
-		runK8petstore(restServers, loadGenerators, f.Client, f.Namespace.Name, k8bpsSmokeTestFinalTransactions, k8bpsSmokeTestTimeout)
+		runK8petstore(restServers, loadGenerators, f.ClientSet, f.Namespace.Name, k8bpsSmokeTestFinalTransactions, k8bpsSmokeTestTimeout)
 	})
 
 })

@@ -22,10 +22,10 @@ package mock_network
 
 import (
 	gomock "github.com/golang/mock/gomock"
+	sets "k8s.io/apimachinery/pkg/util/sets"
 	componentconfig "k8s.io/kubernetes/pkg/apis/componentconfig"
 	container "k8s.io/kubernetes/pkg/kubelet/container"
 	network "k8s.io/kubernetes/pkg/kubelet/network"
-	sets "k8s.io/kubernetes/pkg/util/sets"
 )
 
 // Mock of NetworkPlugin interface
@@ -53,6 +53,10 @@ func (_m *MockNetworkPlugin) Capabilities() sets.Int {
 	ret := _m.ctrl.Call(_m, "Capabilities")
 	ret0, _ := ret[0].(sets.Int)
 	return ret0
+}
+
+func (_m *MockNetworkPlugin) Finish() {
+	_m.ctrl.Finish()
 }
 
 func (_mr *_MockNetworkPluginRecorder) Capabilities() *gomock.Call {

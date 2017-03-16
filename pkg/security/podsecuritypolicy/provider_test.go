@@ -24,12 +24,15 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/diff"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/security/apparmor"
+	"k8s.io/kubernetes/pkg/security/podsecuritypolicy/seccomp"
 	psputil "k8s.io/kubernetes/pkg/security/podsecuritypolicy/util"
-	"k8s.io/kubernetes/pkg/util/diff"
-	"k8s.io/kubernetes/pkg/util/validation/field"
 )
 
 const defaultContainerName = "test-c"
@@ -47,8 +50,12 @@ func TestCreatePodSecurityContextNonmutating(t *testing.T) {
 	// Create a PSP with strategies that will populate a blank psc
 	createPSP := func() *extensions.PodSecurityPolicy {
 		return &extensions.PodSecurityPolicy{
-			ObjectMeta: api.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: "psp-sa",
+				Annotations: map[string]string{
+					seccomp.AllowedProfilesAnnotationKey: "*",
+					seccomp.DefaultProfileAnnotationKey:  "foo",
+				},
 			},
 			Spec: extensions.PodSecurityPolicySpec{
 				DefaultAddCapabilities:   []api.Capability{"foo"},
@@ -119,8 +126,12 @@ func TestCreateContainerSecurityContextNonmutating(t *testing.T) {
 	createPSP := func() *extensions.PodSecurityPolicy {
 		var uid int64 = 1
 		return &extensions.PodSecurityPolicy{
-			ObjectMeta: api.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: "psp-sa",
+				Annotations: map[string]string{
+					seccomp.AllowedProfilesAnnotationKey: "*",
+					seccomp.DefaultProfileAnnotationKey:  "foo",
+				},
 			},
 			Spec: extensions.PodSecurityPolicySpec{
 				DefaultAddCapabilities:   []api.Capability{"foo"},
@@ -238,6 +249,9 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 	failUnsafeSysctlFooPod := defaultPod()
 	failUnsafeSysctlFooPod.Annotations[api.UnsafeSysctlsPodAnnotationKey] = "foo=1"
 
+	failSeccompProfilePod := defaultPod()
+	failSeccompProfilePod.Annotations = map[string]string{api.SeccompPodAnnotationKey: "foo"}
+
 	errorCases := map[string]struct {
 		pod           *api.Pod
 		psp           *extensions.PodSecurityPolicy
@@ -313,6 +327,11 @@ func TestValidatePodSecurityContextFailures(t *testing.T) {
 			psp:           failOtherSysctlsAllowedPSP,
 			expectedError: "sysctl \"foo\" is not allowed",
 		},
+		"failInvalidSeccomp": {
+			pod:           failSeccompProfilePod,
+			psp:           defaultPSP(),
+			expectedError: "Forbidden: seccomp may not be set",
+		},
 	}
 	for k, v := range errorCases {
 		provider, err := NewSimpleProvider(v.psp, "namespace", NewSimpleStrategyFactory())
@@ -356,8 +375,11 @@ func TestValidateContainerSecurityContextFailures(t *testing.T) {
 	}
 
 	failNilAppArmorPod := defaultPod()
-	failInvalidAppArmorPod := defaultPod()
-	apparmor.SetProfileName(failInvalidAppArmorPod, defaultContainerName, apparmor.ProfileNamePrefix+"foo")
+	v1FailInvalidAppArmorPod := defaultV1Pod()
+	apparmor.SetProfileName(v1FailInvalidAppArmorPod, defaultContainerName, apparmor.ProfileNamePrefix+"foo")
+	failInvalidAppArmorPod := &api.Pod{}
+	v1.Convert_v1_Pod_To_api_Pod(v1FailInvalidAppArmorPod, failInvalidAppArmorPod, nil)
+
 	failAppArmorPSP := defaultPSP()
 	failAppArmorPSP.Annotations = map[string]string{
 		apparmor.AllowedProfilesAnnotationKey: apparmor.ProfileRuntimeDefault,
@@ -381,6 +403,16 @@ func TestValidateContainerSecurityContextFailures(t *testing.T) {
 	readOnlyRootFSPodFalse := defaultPod()
 	readOnlyRootFS := false
 	readOnlyRootFSPodFalse.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem = &readOnlyRootFS
+
+	failSeccompPod := defaultPod()
+	failSeccompPod.Annotations = map[string]string{
+		api.SeccompContainerAnnotationKeyPrefix + failSeccompPod.Spec.Containers[0].Name: "foo",
+	}
+
+	failSeccompPodInheritPodAnnotation := defaultPod()
+	failSeccompPodInheritPodAnnotation.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: "foo",
+	}
 
 	errorCases := map[string]struct {
 		pod           *api.Pod
@@ -431,6 +463,16 @@ func TestValidateContainerSecurityContextFailures(t *testing.T) {
 			pod:           readOnlyRootFSPodFalse,
 			psp:           readOnlyRootFSPSP,
 			expectedError: "ReadOnlyRootFilesystem must be set to true",
+		},
+		"failSeccompContainerAnnotation": {
+			pod:           failSeccompPod,
+			psp:           defaultPSP(),
+			expectedError: "Forbidden: seccomp may not be set",
+		},
+		"failSeccompContainerPodAnnotation": {
+			pod:           failSeccompPodInheritPodAnnotation,
+			psp:           defaultPSP(),
+			expectedError: "Forbidden: seccomp may not be set",
 		},
 	}
 
@@ -512,6 +554,16 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 	unsafeSysctlFooPod := defaultPod()
 	unsafeSysctlFooPod.Annotations[api.UnsafeSysctlsPodAnnotationKey] = "foo=1"
 
+	seccompPSP := defaultPSP()
+	seccompPSP.Annotations = map[string]string{
+		seccomp.AllowedProfilesAnnotationKey: "foo",
+	}
+
+	seccompPod := defaultPod()
+	seccompPod.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: "foo",
+	}
+
 	errorCases := map[string]struct {
 		pod *api.Pod
 		psp *extensions.PodSecurityPolicy
@@ -555,6 +607,10 @@ func TestValidatePodSecurityContextSuccess(t *testing.T) {
 		"pass empty profile with unsafe sysctl": {
 			pod: unsafeSysctlFooPod,
 			psp: defaultPSP(),
+		},
+		"pass seccomp validating PSP": {
+			pod: seccompPod,
+			psp: seccompPSP,
 		},
 	}
 
@@ -618,8 +674,10 @@ func TestValidateContainerSecurityContextSuccess(t *testing.T) {
 	appArmorPSP.Annotations = map[string]string{
 		apparmor.AllowedProfilesAnnotationKey: apparmor.ProfileRuntimeDefault,
 	}
-	appArmorPod := defaultPod()
-	apparmor.SetProfileName(appArmorPod, defaultContainerName, apparmor.ProfileRuntimeDefault)
+	v1AppArmorPod := defaultV1Pod()
+	apparmor.SetProfileName(v1AppArmorPod, defaultContainerName, apparmor.ProfileRuntimeDefault)
+	appArmorPod := &api.Pod{}
+	v1.Convert_v1_Pod_To_api_Pod(v1AppArmorPod, appArmorPod, nil)
 
 	privPSP := defaultPSP()
 	privPSP.Spec.Privileged = true
@@ -666,6 +724,21 @@ func TestValidateContainerSecurityContextSuccess(t *testing.T) {
 	readOnlyRootFSPodTrue := defaultPod()
 	readOnlyRootFSTrue := true
 	readOnlyRootFSPodTrue.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem = &readOnlyRootFSTrue
+
+	seccompPSP := defaultPSP()
+	seccompPSP.Annotations = map[string]string{
+		seccomp.AllowedProfilesAnnotationKey: "foo",
+	}
+
+	seccompPod := defaultPod()
+	seccompPod.Annotations = map[string]string{
+		api.SeccompContainerAnnotationKeyPrefix + seccompPod.Spec.Containers[0].Name: "foo",
+	}
+
+	seccompPodInherit := defaultPod()
+	seccompPodInherit.Annotations = map[string]string{
+		api.SeccompPodAnnotationKey: "foo",
+	}
 
 	errorCases := map[string]struct {
 		pod *api.Pod
@@ -714,6 +787,14 @@ func TestValidateContainerSecurityContextSuccess(t *testing.T) {
 		"pass read only root fs - true": {
 			pod: readOnlyRootFSPodTrue,
 			psp: defaultPSP(),
+		},
+		"pass seccomp container annotation": {
+			pod: seccompPod,
+			psp: seccompPSP,
+		},
+		"pass seccomp inherit pod annotation": {
+			pod: seccompPodInherit,
+			psp: seccompPSP,
 		},
 	}
 
@@ -800,7 +881,7 @@ func TestGenerateContainerSecurityContextReadOnlyRootFS(t *testing.T) {
 			t.Errorf("%s expected a nil ReadOnlyRootFilesystem but got %t", k, *sc.ReadOnlyRootFilesystem)
 		}
 		if v.expected != nil && sc.ReadOnlyRootFilesystem == nil {
-			t.Errorf("%s expected a non nil ReadOnlyRootFilesystem but recieved nil", k)
+			t.Errorf("%s expected a non nil ReadOnlyRootFilesystem but received nil", k)
 		}
 		if v.expected != nil && sc.ReadOnlyRootFilesystem != nil && (*v.expected != *sc.ReadOnlyRootFilesystem) {
 			t.Errorf("%s expected a non nil ReadOnlyRootFilesystem set to %t but got %t", k, *v.expected, *sc.ReadOnlyRootFilesystem)
@@ -811,7 +892,7 @@ func TestGenerateContainerSecurityContextReadOnlyRootFS(t *testing.T) {
 
 func defaultPSP() *extensions.PodSecurityPolicy {
 	return &extensions.PodSecurityPolicy{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:        "psp-sa",
 			Annotations: map[string]string{},
 		},
@@ -835,7 +916,7 @@ func defaultPSP() *extensions.PodSecurityPolicy {
 func defaultPod() *api.Pod {
 	var notPriv bool = false
 	return &api.Pod{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{},
 		},
 		Spec: api.PodSpec{
@@ -846,6 +927,30 @@ func defaultPod() *api.Pod {
 				{
 					Name: defaultContainerName,
 					SecurityContext: &api.SecurityContext{
+						// expected to be set by defaulting mechanisms
+						Privileged: &notPriv,
+						// fill in the rest for test cases
+					},
+				},
+			},
+		},
+	}
+}
+
+func defaultV1Pod() *v1.Pod {
+	var notPriv bool = false
+	return &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{},
+		},
+		Spec: v1.PodSpec{
+			SecurityContext: &v1.PodSecurityContext{
+			// fill in for test cases
+			},
+			Containers: []v1.Container{
+				{
+					Name: defaultContainerName,
+					SecurityContext: &v1.SecurityContext{
 						// expected to be set by defaulting mechanisms
 						Privileged: &notPriv,
 						// fill in the rest for test cases

@@ -17,59 +17,62 @@ limitations under the License.
 package testing
 
 import (
-	"fmt"
 	"sync"
 
-	runtimeApi "k8s.io/kubernetes/pkg/kubelet/api/v1alpha1/runtime"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/api/v1alpha1/runtime"
 	"k8s.io/kubernetes/pkg/kubelet/util/sliceutils"
-)
-
-var (
-	fakeImageSize uint64 = 1
 )
 
 type FakeImageService struct {
 	sync.Mutex
 
-	Called []string
-	Images map[string]*runtimeApi.Image
+	FakeImageSize uint64
+	Called        []string
+	Images        map[string]*runtimeapi.Image
 }
 
 func (r *FakeImageService) SetFakeImages(images []string) {
 	r.Lock()
 	defer r.Unlock()
 
-	r.Images = make(map[string]*runtimeApi.Image)
+	r.Images = make(map[string]*runtimeapi.Image)
 	for _, image := range images {
-		r.Images[image] = makeFakeImage(image)
+		r.Images[image] = r.makeFakeImage(image)
 	}
+}
+
+func (r *FakeImageService) SetFakeImageSize(size uint64) {
+	r.Lock()
+	defer r.Unlock()
+
+	r.FakeImageSize = size
 }
 
 func NewFakeImageService() *FakeImageService {
 	return &FakeImageService{
 		Called: make([]string, 0),
-		Images: make(map[string]*runtimeApi.Image),
+		Images: make(map[string]*runtimeapi.Image),
 	}
 }
 
-func makeFakeImage(image string) *runtimeApi.Image {
-	return &runtimeApi.Image{
-		Id:       &image,
-		Size_:    &fakeImageSize,
+func (r *FakeImageService) makeFakeImage(image string) *runtimeapi.Image {
+	return &runtimeapi.Image{
+		Id:       image,
+		Size_:    r.FakeImageSize,
 		RepoTags: []string{image},
 	}
 }
 
-func (r *FakeImageService) ListImages(filter *runtimeApi.ImageFilter) ([]*runtimeApi.Image, error) {
+func (r *FakeImageService) ListImages(filter *runtimeapi.ImageFilter) ([]*runtimeapi.Image, error) {
 	r.Lock()
 	defer r.Unlock()
 
 	r.Called = append(r.Called, "ListImages")
 
-	images := make([]*runtimeApi.Image, 0)
+	images := make([]*runtimeapi.Image, 0)
 	for _, img := range r.Images {
 		if filter != nil && filter.Image != nil {
-			if !sliceutils.StringInSlice(filter.Image.GetImage(), img.RepoTags) {
+			if !sliceutils.StringInSlice(filter.Image.Image, img.RepoTags) {
 				continue
 			}
 		}
@@ -79,20 +82,16 @@ func (r *FakeImageService) ListImages(filter *runtimeApi.ImageFilter) ([]*runtim
 	return images, nil
 }
 
-func (r *FakeImageService) ImageStatus(image *runtimeApi.ImageSpec) (*runtimeApi.Image, error) {
+func (r *FakeImageService) ImageStatus(image *runtimeapi.ImageSpec) (*runtimeapi.Image, error) {
 	r.Lock()
 	defer r.Unlock()
 
 	r.Called = append(r.Called, "ImageStatus")
 
-	if img, ok := r.Images[image.GetImage()]; ok {
-		return img, nil
-	}
-
-	return nil, fmt.Errorf("image %q not found", image.GetImage())
+	return r.Images[image.Image], nil
 }
 
-func (r *FakeImageService) PullImage(image *runtimeApi.ImageSpec, auth *runtimeApi.AuthConfig) error {
+func (r *FakeImageService) PullImage(image *runtimeapi.ImageSpec, auth *runtimeapi.AuthConfig) (string, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -100,22 +99,22 @@ func (r *FakeImageService) PullImage(image *runtimeApi.ImageSpec, auth *runtimeA
 
 	// ImageID should be randomized for real container runtime, but here just use
 	// image's name for easily making fake images.
-	imageID := image.GetImage()
+	imageID := image.Image
 	if _, ok := r.Images[imageID]; !ok {
-		r.Images[imageID] = makeFakeImage(image.GetImage())
+		r.Images[imageID] = r.makeFakeImage(image.Image)
 	}
 
-	return nil
+	return imageID, nil
 }
 
-func (r *FakeImageService) RemoveImage(image *runtimeApi.ImageSpec) error {
+func (r *FakeImageService) RemoveImage(image *runtimeapi.ImageSpec) error {
 	r.Lock()
 	defer r.Unlock()
 
 	r.Called = append(r.Called, "RemoveImage")
 
 	// Remove the image
-	delete(r.Images, image.GetImage())
+	delete(r.Images, image.Image)
 
 	return nil
 }

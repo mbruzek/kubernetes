@@ -15,19 +15,19 @@
 # Cross-build the serve_hostname image
 #
 # Usage:
-#       [TAG=v1.5] [PREFIX=gcr.io/google_containers] [TEST_REGISTRY=b.gcr.io/k8s_authenticated_test] [ARCH=amd64] [BASEIMAGE=busybox] make all
+#       [TAG=v1.5] [PREFIX=gcr.io/google_containers] [TEST_REGISTRY=gcr.io/k8s-authenticated-test] [ARCH=amd64] [BASEIMAGE=busybox] make all
 
 .PHONY: all push container clean
 
 TAG ?= v1.5
 
-REGISTRY ?= gcr.io/google_containers
-TEST_REGISTRY ?= b.gcr.io/k8s_authenticated_test
+REGISTRY ?= gcr.io/google-containers
+TEST_REGISTRY ?= gcr.io/k8s-authenticated-test
 
-# Architectures supported: amd64, arm, arm64 and ppc64le
+# Architectures supported: amd64, arm, arm64, ppc64le and s390x
 ARCH ?= amd64
 
-ALL_ARCH = amd64 arm arm64 ppc64le
+ALL_ARCH = amd64 arm arm64 ppc64le s390x
 
 GOARM=6
 TEMP_DIR := $(shell mktemp -d)
@@ -51,6 +51,9 @@ ifeq ($(ARCH),arm64)
 endif
 ifeq ($(ARCH),ppc64le)
         BASEIMAGE?=ppc64le/busybox
+endif
+ifeq ($(ARCH),s390x)
+        BASEIMAGE?=s390x/busybox
 endif
 
 # If you want to build AND push all containers, see the 'all-push' rule.
@@ -83,18 +86,17 @@ container: .container-$(ARCH)
 	# Set the base image
 	cd $(TEMP_DIR) && sed -i.bak 's|BASEIMAGE|$(BASEIMAGE)|g' Dockerfile
 
-	docker build -t $(IMAGE):$(TAG) $(TEMP_DIR)
+	docker build --pull -t $(IMAGE):$(TAG) $(TEMP_DIR)
 	if [ -n "$(TEST_REGISTRY)" ]; then \
 		docker tag $(IMAGE):$(TAG) $(TEST_IMAGE):$(TAG) ;\
 	fi
 
 push: .push-$(ARCH)
 .push-$(ARCH): .container-$(ARCH)
-	gcloud docker push $(IMAGE):$(TAG)
+	gcloud docker -- push $(IMAGE):$(TAG)
 	if [ -n "$(TEST_REGISTRY)" ]; then \
-		gcloud docker push $(TEST_IMAGE):$(TAG) ;\
+		gcloud docker -- push $(TEST_IMAGE):$(TAG) ;\
 	fi
 
 clean:
 	rm -rf $(BIN)
-
