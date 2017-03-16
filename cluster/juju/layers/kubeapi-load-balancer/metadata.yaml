@@ -1,17 +1,17 @@
 name: kubeapi-load-balancer
-summary: Nginx Load Balancer
+summary: A Kuberenetes master load balancer.
 maintainers:
+  - Matthew Bruzek <matthew.bruzek@canonical.com>
   - Charles Butler <charles.butler@canonical.com>
 description: |
-  A round robin Nginx load balancer to distribute traffic for kubernetes apiservers.
+  A layer 4 load balancer to distribute traffic for kubernetes apiservers.
 tags:
-  - misc
+  - load-balancer
+  - reverse-proxy
+  - networking
 subordinate: false
 series:
   - xenial
-requires:
-  apiserver:
-    interface: http
 provides:
   loadbalancer:
       interface: public-address

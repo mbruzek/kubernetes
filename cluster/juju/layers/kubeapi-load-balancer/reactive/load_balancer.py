@@ -24,17 +24,13 @@ from charms.reactive import set_state, remove_state
 from charmhelpers.core import hookenv
 from charmhelpers.contrib.charmsupport import nrpe
 
-from charms.layer import nginx
-
-from subprocess import Popen
-from subprocess import PIPE
-from subprocess import STDOUT
+from charms.layer import haproxy
 
 
 @when('certificates.available')
 def request_server_certificates(tls):
-    '''Send the data that is required to create a server certificate for
-    this server.'''
+    """Send the data that is required to create a server certificate for
+    this server."""
     # Use the public ip of this unit as the Common Name for the certificate.
     common_name = hookenv.unit_public_ip()
     # Create SANs that the tls layer will add to the server cert.
@@ -52,7 +48,7 @@ def request_server_certificates(tls):
 @when('nginx.available', 'apiserver.available',
       'certificates.server.cert.available')
 def install_load_balancer(apiserver, tls):
-    ''' Create the default vhost template for load balancing '''
+    """ Create the default vhost template for load balancing """
     # Get the tls paths from the layer data.
     layer_options = layer.options('tls-client')
     server_cert_path = layer_options.get('server_certificate_path')
@@ -83,34 +79,18 @@ def install_load_balancer(apiserver, tls):
         hookenv.status_set('active', 'Loadbalancer ready.')
 
 
-@when('nginx.available')
-def set_nginx_version():
-    ''' Surface the currently deployed version of nginx to Juju '''
-    cmd = 'nginx -v'
-    p = Popen(cmd, shell=True,
-              stdin=PIPE,
-              stdout=PIPE,
-              stderr=STDOUT,
-              close_fds=True)
-    raw = p.stdout.read()
-    # The version comes back as:
-    # nginx version: nginx/1.10.0 (Ubuntu)
-    version = raw.split(b'/')[-1].split(b' ')[0]
-    hookenv.application_version_set(version.rstrip())
-
-
 @when('website.available')
 def provide_application_details(website):
-    ''' re-use the nginx layer website relation to relay the hostname/port
+    """ re-use the nginx layer website relation to relay the hostname/port
     to any consuming kubernetes-workers, or other units that require the
-    kubernetes API '''
+    kubernetes API """
     website.configure(port=hookenv.config('port'))
 
 
 @when('loadbalancer.available')
 def provide_loadbalancing(loadbalancer):
-    '''Send the public address and port to the public-address interface, so
-    the subordinates can get the public address of this loadbalancer.'''
+    """Send the public address and port to the public-address interface, so
+    the subordinates can get the public address of this loadbalancer."""
     loadbalancer.set_address_port(hookenv.unit_get('public-address'),
                                   hookenv.config('port'))
 
@@ -118,8 +98,9 @@ def provide_loadbalancing(loadbalancer):
 @when('nrpe-external-master.available')
 @when_not('nrpe-external-master.initial-config')
 def initial_nrpe_config(nagios=None):
-    set_state('nrpe-external-master.initial-config')
+    """Update the nagios configuration."""
     update_nrpe_config(nagios)
+    set_state('nrpe-external-master.initial-config')
 
 
 @when('nginx.available')
@@ -127,8 +108,8 @@ def initial_nrpe_config(nagios=None):
 @when_any('config.changed.nagios_context',
           'config.changed.nagios_servicegroups')
 def update_nrpe_config(unused=None):
-    services = ('nginx',)
-
+    """Get the hostnames and configure the checks for Nagios."""
+    services = ('haproxy',)
     hostname = nrpe.get_nagios_hostname()
     current_unit = nrpe.get_nagios_unit_name()
     nrpe_setup = nrpe.NRPE(hostname=hostname)
@@ -139,11 +120,10 @@ def update_nrpe_config(unused=None):
 @when_not('nrpe-external-master.available')
 @when('nrpe-external-master.initial-config')
 def remove_nrpe_config(nagios=None):
+    """Clean up the Nagios checks by removing the checks for the services."""
     remove_state('nrpe-external-master.initial-config')
-
     # List of systemd services for which the checks will be removed
-    services = ('nginx',)
-
+    services = ('hproxy',)
     # The current nrpe-external-master interface doesn't handle a lot of logic,
     # use the charm-helpers code for now.
     hostname = nrpe.get_nagios_hostname()

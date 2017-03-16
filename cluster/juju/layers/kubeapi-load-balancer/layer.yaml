@@ -1,7 +1,7 @@
 repo: https://github.com/kubernetes/kubernetes.git
 includes:
   - 'layer:nagios'
-  - 'layer:nginx'
+  - 'layer:haproxy-core'
   - 'layer:tls-client'
   - 'interface:public-address'
 options:
