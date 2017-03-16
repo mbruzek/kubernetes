@@ -20,15 +20,15 @@ import (
 	"reflect"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/kubernetes/pkg/api"
 	_ "k8s.io/kubernetes/pkg/api/install"
-	"k8s.io/kubernetes/pkg/api/resource"
 	"k8s.io/kubernetes/pkg/api/v1"
 	_ "k8s.io/kubernetes/pkg/apis/extensions/install"
 	. "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
-	"k8s.io/kubernetes/pkg/util/intstr"
 )
 
 func TestSetDefaultDaemonSet(t *testing.T) {
@@ -74,6 +74,9 @@ func TestSetDefaultDaemonSet(t *testing.T) {
 						MatchLabels: defaultLabels,
 					},
 					Template: defaultTemplate,
+					UpdateStrategy: DaemonSetUpdateStrategy{
+						Type: OnDeleteDaemonSetStrategyType,
+					},
 				},
 			},
 		},
@@ -99,6 +102,9 @@ func TestSetDefaultDaemonSet(t *testing.T) {
 						MatchLabels: defaultLabels,
 					},
 					Template: defaultTemplate,
+					UpdateStrategy: DaemonSetUpdateStrategy{
+						Type: OnDeleteDaemonSetStrategyType,
+					},
 				},
 			},
 		},
@@ -107,6 +113,9 @@ func TestSetDefaultDaemonSet(t *testing.T) {
 			expected: &DaemonSet{
 				Spec: DaemonSetSpec{
 					Template: templateNoLabel,
+					UpdateStrategy: DaemonSetUpdateStrategy{
+						Type: OnDeleteDaemonSetStrategyType,
+					},
 				},
 			},
 		},
@@ -117,6 +126,9 @@ func TestSetDefaultDaemonSet(t *testing.T) {
 			expected: &DaemonSet{
 				Spec: DaemonSetSpec{
 					Template: templateNoLabel,
+					UpdateStrategy: DaemonSetUpdateStrategy{
+						Type: OnDeleteDaemonSetStrategyType,
+					},
 				},
 			},
 		},
@@ -127,6 +139,9 @@ func TestSetDefaultDaemonSet(t *testing.T) {
 			expected: &DaemonSet{
 				Spec: DaemonSetSpec{
 					Template: templateNoLabel,
+					UpdateStrategy: DaemonSetUpdateStrategy{
+						Type: OnDeleteDaemonSetStrategyType,
+					},
 				},
 			},
 		},
@@ -499,78 +514,6 @@ func TestDefaultRequestIsNotSetForReplicaSet(t *testing.T) {
 	}
 }
 
-func TestSetDefaultHorizontalPodAutoscalerMinReplicas(t *testing.T) {
-	tests := []struct {
-		hpa            HorizontalPodAutoscaler
-		expectReplicas int32
-	}{
-		{
-			hpa:            HorizontalPodAutoscaler{},
-			expectReplicas: 1,
-		},
-		{
-			hpa: HorizontalPodAutoscaler{
-				Spec: HorizontalPodAutoscalerSpec{
-					MinReplicas: newInt32(3),
-				},
-			},
-			expectReplicas: 3,
-		},
-	}
-
-	for _, test := range tests {
-		hpa := &test.hpa
-		obj2 := roundTrip(t, runtime.Object(hpa))
-		hpa2, ok := obj2.(*HorizontalPodAutoscaler)
-		if !ok {
-			t.Errorf("unexpected object: %v", hpa2)
-			t.FailNow()
-		}
-		if hpa2.Spec.MinReplicas == nil {
-			t.Errorf("unexpected nil MinReplicas")
-		} else if test.expectReplicas != *hpa2.Spec.MinReplicas {
-			t.Errorf("expected: %d MinReplicas, got: %d", test.expectReplicas, *hpa2.Spec.MinReplicas)
-		}
-	}
-}
-
-func TestSetDefaultHorizontalPodAutoscalerCpuUtilization(t *testing.T) {
-	tests := []struct {
-		hpa               HorizontalPodAutoscaler
-		expectUtilization int32
-	}{
-		{
-			hpa:               HorizontalPodAutoscaler{},
-			expectUtilization: 80,
-		},
-		{
-			hpa: HorizontalPodAutoscaler{
-				Spec: HorizontalPodAutoscalerSpec{
-					CPUUtilization: &CPUTargetUtilization{
-						TargetPercentage: int32(50),
-					},
-				},
-			},
-			expectUtilization: 50,
-		},
-	}
-
-	for _, test := range tests {
-		hpa := &test.hpa
-		obj2 := roundTrip(t, runtime.Object(hpa))
-		hpa2, ok := obj2.(*HorizontalPodAutoscaler)
-		if !ok {
-			t.Errorf("unexpected object: %v", hpa2)
-			t.FailNow()
-		}
-		if hpa2.Spec.CPUUtilization == nil {
-			t.Errorf("unexpected nil CPUUtilization")
-		} else if test.expectUtilization != hpa2.Spec.CPUUtilization.TargetPercentage {
-			t.Errorf("expected: %d CPUUtilization, got: %d", test.expectUtilization, hpa2.Spec.CPUUtilization.TargetPercentage)
-		}
-	}
-}
-
 func roundTrip(t *testing.T, obj runtime.Object) runtime.Object {
 	data, err := runtime.Encode(api.Codecs.LegacyCodec(SchemeGroupVersion), obj)
 	if err != nil {
@@ -595,16 +538,4 @@ func newInt32(val int32) *int32 {
 	p := new(int32)
 	*p = val
 	return p
-}
-
-func newString(val string) *string {
-	p := new(string)
-	*p = val
-	return p
-}
-
-func newBool(val bool) *bool {
-	b := new(bool)
-	*b = val
-	return b
 }

@@ -31,12 +31,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/rest/fake"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/v1"
 	cmdtesting "k8s.io/kubernetes/pkg/kubectl/cmd/testing"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/util/intstr"
 )
 
 func TestGetRestartPolicy(t *testing.T) {
@@ -113,7 +114,13 @@ func TestGetEnv(t *testing.T) {
 }
 
 func TestRunArgsFollowDashRules(t *testing.T) {
-	_, _, rc := testData()
+	one := int32(1)
+	rc := &v1.ReplicationController{
+		ObjectMeta: metav1.ObjectMeta{Name: "rc1", Namespace: "test", ResourceVersion: "18"},
+		Spec: v1.ReplicationControllerSpec{
+			Replicas: &one,
+		},
+	}
 
 	tests := []struct {
 		args          []string
@@ -158,7 +165,14 @@ func TestRunArgsFollowDashRules(t *testing.T) {
 			APIRegistry:          api.Registry,
 			NegotiatedSerializer: ns,
 			Client: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: 201, Header: defaultHeader(), Body: objBody(codec, &rc.Items[0])}, nil
+				if req.URL.Path == "/namespaces/test/replicationcontrollers" {
+					return &http.Response{StatusCode: 201, Header: defaultHeader(), Body: objBody(codec, rc)}, nil
+				} else {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       ioutil.NopCloser(&bytes.Buffer{}),
+					}, nil
+				}
 			}),
 		}
 		tf.Namespace = "test"
