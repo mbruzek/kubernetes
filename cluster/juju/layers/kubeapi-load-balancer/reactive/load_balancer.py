@@ -21,6 +21,7 @@ import subprocess
 from charms import layer
 from charms.reactive import when, when_any, when_not
 from charms.reactive import set_state, remove_state
+from charms.reactive.helpers import data_changed
 from charmhelpers.core import hookenv
 from charmhelpers.contrib.charmsupport import nrpe
 
@@ -45,10 +46,30 @@ def request_server_certificates(tls):
     tls.request_server_cert(common_name, sans, certificate_name)
 
 
-@when('nginx.available', 'apiserver.available',
-      'certificates.server.cert.available')
-def install_load_balancer(apiserver, tls):
-    """ Create the default vhost template for load balancing """
+@when('haproxy.enabled')
+def haproxy_enabled():
+    """The HAProxy service is enabled, print out the info and move on."""
+    hookenv.log('Another layer enabled haproxy.')
+
+
+@when('apiserver.available')
+def apiserver_available(apiserver):
+    """The apiserver relation is available so get the information from it."""
+    hookenv.log('The apiserver relation is available {}'.format(dir(apiserver)))
+    services = apiserver.services()
+    for service in services:
+        hosts = service['hosts']
+        for host in hosts:
+            hookenv.log('{} has a unit {}:{}'.format(
+                service['service_name'],
+                host['hostname'],
+                host['port']))
+
+
+@when('apiserver.available', 'certificates.server.cert.available')
+def certificates_available(apiserver, tls):
+    """The TLS (ca, key and cert) are available for this server."""
+    hookenv.log('The tls relation is available {}'.format(dir(tls)))
     # Get the tls paths from the layer data.
     layer_options = layer.options('tls-client')
     server_cert_path = layer_options.get('server_certificate_path')
@@ -57,31 +78,37 @@ def install_load_balancer(apiserver, tls):
     key_exists = server_key_path and os.path.isfile(server_key_path)
     # Do both the the key and certificate exist?
     if cert_exists and key_exists:
+        pem_path = '/srv/kubernetes/haproxy.pem'
+        # Create a pem file and make it owned by haproxy.
+        haproxy.create_pem(server_key_path, server_cert_path, pem_path)
         # At this point the cert and key exist, and they are owned by root.
-        chown = ['chown', 'www-data:www-data', server_cert_path]
-        # Change the owner to www-data so the nginx process can read the cert.
-        subprocess.call(chown)
-        chown = ['chown', 'www-data:www-data', server_key_path]
-        # Change the owner to www-data so the nginx process can read the key.
+        chown = ['chown', 'haproxy:haproxy', pem_path]
+        # Change the owner to haproxy so the process can read the file.
         subprocess.call(chown)
 
-        hookenv.open_port(hookenv.config('port'))
+        # hookenv.open_port(hookenv.config('port'))
         services = apiserver.services()
-        nginx.configure_site(
-                'apilb',
-                'apilb.conf',
-                server_name='_',
-                services=services,
-                port=hookenv.config('port'),
-                server_certificate=server_cert_path,
-                server_key=server_key_path,
-        )
-        hookenv.status_set('active', 'Loadbalancer ready.')
+        relation_changed = data_changed('apiserver', services)
+        config_changed = data_changed('config', hookenv.config())
+        # Only when the relation or config data changes, render a new template.
+        if relation_changed or config_changed:
+            hookenv.log('The relation or configuration data has changed.')
+            unit_name = hookenv.local_unit().replace('/', '-')
+            template = 'kube-api-load-balancer.cfg'
+            # Render the kube-api-load-balancer template.
+            haproxy.configure(unit_name,
+                              template,
+                              services=services,
+                              path_to_pem=pem_path)
+    else:
+        hookenv.log('The key or cert does not exist.')
+        hookenv.log('Check the server cert {}'.format(server_cert_path))
+        hookenv.log('Check the server key {}'.format(server_key_path))
 
 
 @when('website.available')
 def provide_application_details(website):
-    """ re-use the nginx layer website relation to relay the hostname/port
+    """Use the layer website relation to relay the hostname/port
     to any consuming kubernetes-workers, or other units that require the
     kubernetes API """
     website.configure(port=hookenv.config('port'))

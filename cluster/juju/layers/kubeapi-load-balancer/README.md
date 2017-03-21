@@ -13,3 +13,8 @@ juju deploy kubeapi-load-balancer
 juju deploy kubernetes-master
 juju add-relation kubernetes-master:kube-api-endpoint kubeapi-load-balancer:reverseproxy 
 ```
+
+Please see the 
+[Canonical Distribution of Kubernetes](https://jujucharms.com/canonical-kubernetes/)
+for more information on how this charm is used to reverse proxy traffic to the
+kubernetes-master charm.
