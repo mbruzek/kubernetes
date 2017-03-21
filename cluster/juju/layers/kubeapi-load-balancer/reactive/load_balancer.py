@@ -28,6 +28,10 @@ from charmhelpers.contrib.charmsupport import nrpe
 from charms.layer import haproxy
 
 
+PEM_PATH = '/etc/haproxy/haproxy.pem'
+TEMPLATE = 'kube-api-load-balancer.cfg'
+
+
 @when('certificates.available')
 def request_server_certificates(tls):
     """Send the data that is required to create a server certificate for
@@ -46,64 +50,47 @@ def request_server_certificates(tls):
     tls.request_server_cert(common_name, sans, certificate_name)
 
 
-@when('haproxy.enabled')
-def haproxy_enabled():
-    """The HAProxy service is enabled, print out the info and move on."""
-    hookenv.log('Another layer enabled haproxy.')
-
-
-@when('apiserver.available')
-def apiserver_available(apiserver):
-    """The apiserver relation is available so get the information from it."""
-    hookenv.log('The apiserver relation is available {}'.format(dir(apiserver)))
-    services = apiserver.services()
-    for service in services:
-        hosts = service['hosts']
-        for host in hosts:
-            hookenv.log('{} has a unit {}:{}'.format(
-                service['service_name'],
-                host['hostname'],
-                host['port']))
-
-
 @when('apiserver.available', 'certificates.server.cert.available')
 def certificates_available(apiserver, tls):
-    """The TLS (ca, key and cert) are available for this server."""
-    hookenv.log('The tls relation is available {}'.format(dir(tls)))
+    """The API server and the TLS (ca, key and cert) are available for this
+    server, render the configuration file if the data has changed."""
+    services = apiserver.services()
     # Get the tls paths from the layer data.
     layer_options = layer.options('tls-client')
-    server_cert_path = layer_options.get('server_certificate_path')
-    cert_exists = server_cert_path and os.path.isfile(server_cert_path)
-    server_key_path = layer_options.get('server_key_path')
-    key_exists = server_key_path and os.path.isfile(server_key_path)
+    ca_path = layer_options.get('ca_certificate_path')
+    cert_path = layer_options.get('server_certificate_path')
+    cert_exists = cert_path and os.path.isfile(cert_path)
+    key_path = layer_options.get('server_key_path')
+    key_exists = key_path and os.path.isfile(key_path)
     # Do both the the key and certificate exist?
     if cert_exists and key_exists:
-        pem_path = '/srv/kubernetes/haproxy.pem'
-        # Create a pem file and make it owned by haproxy.
-        haproxy.create_pem(server_key_path, server_cert_path, pem_path)
-        # At this point the cert and key exist, and they are owned by root.
-        chown = ['chown', 'haproxy:haproxy', pem_path]
+        # Create a PEM file that HAProxy can use.
+        haproxy.create_pem(key_path, cert_path, ca_path, PEM_PATH)
+        chown = ['chown', 'haproxy:haproxy', PEM_PATH]
         # Change the owner to haproxy so the process can read the file.
         subprocess.call(chown)
-
-        # hookenv.open_port(hookenv.config('port'))
-        services = apiserver.services()
-        relation_changed = data_changed('apiserver', services)
-        config_changed = data_changed('config', hookenv.config())
-        # Only when the relation or config data changes, render a new template.
-        if relation_changed or config_changed:
-            hookenv.log('The relation or configuration data has changed.')
-            unit_name = hookenv.local_unit().replace('/', '-')
-            template = 'kube-api-load-balancer.cfg'
-            # Render the kube-api-load-balancer template.
-            haproxy.configure(unit_name,
-                              template,
-                              services=services,
-                              path_to_pem=pem_path)
     else:
         hookenv.log('The key or cert does not exist.')
-        hookenv.log('Check the server cert {}'.format(server_cert_path))
-        hookenv.log('Check the server key {}'.format(server_key_path))
+        hookenv.log('Check the server cert {}'.format(cert_path))
+        hookenv.log('Check the server key {}'.format(key_path))
+
+    pem_hash = ''
+    if os.path.isfile(PEM_PATH):
+        shasum = ['sha256sum', PEM_PATH]
+        # Get the hash value of the PEM file.
+        pem_hash = subprocess.check_output(shasum)
+    pem_changed = data_changed('pem_hash', pem_hash)
+    relation_changed = data_changed('apiserver', services)
+    config_changed = data_changed('config', hookenv.config())
+    # Only when the pem, relation or charm config changes render new config.
+    if pem_changed or relation_changed or config_changed:
+        hookenv.log('The relation or configuration data has changed.')
+        unit_name = hookenv.local_unit().replace('/', '-')
+        # Render the kube-api-load-balancer template.
+        haproxy.configure(unit_name,
+                          TEMPLATE,
+                          services=services,
+                          path_to_pem=PEM_PATH)
 
 
 @when('website.available')
